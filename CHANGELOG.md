@@ -12,10 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab snapshots: full viewport or region select, delay (default 5s), popup controls, **Alt+Shift+S** shortcut.
 - **Optimize for LinkedIn**: center-crop/scale to 1280×644 so LinkedIn does not resize again.
 - Snapshot formats: **PNG (best)** for LinkedIn quality, **JPG** (95%), **GIF (smallest)** — 256-color single-frame.
+- Recording **video quality** presets: Efficient (~2 Mbps), Standard (~5 Mbps, default), High (~8 Mbps).
+- Optional **tab audio** capture (on by default); can be disabled per session.
+- **Optimize for LinkedIn** (video): selects a ~6 Mbps LinkedIn profile and prefers H.264/AAC encoding.
 
 ### Fixed
 
 - Popup layout stays compact after snapshot controls were added (no scrollbar).
+- Popup uses **Record / Snapshot** tabs so quality and audio options fit without scrolling.
 - Pause/stop survive host pages that hide, remove, or restyle on-page controls (closed Shadow DOM overlay).
 - Remount session overlay after navigations / DOM detach; re-inject when the popup checks status.
 - Persist in-flight session state across MV3 service worker restarts.
@@ -23,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Packaged zip artifact name includes `chrome-plugin`.
-- Extension version **1.0.2**.
+- MediaRecorder requests an ideal **30 fps** capture rate and explicit video/audio bitrates from the chosen quality preset.
+- Extension version **1.0.3**.
 
 ## [1.0.0] - 2026-07-28
 

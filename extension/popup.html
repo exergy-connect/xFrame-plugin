@@ -36,61 +36,117 @@
       }
 
       main {
-        padding: 12px 14px 14px;
+        padding: 10px 12px 12px;
         display: grid;
-        gap: 10px;
+        gap: 8px;
       }
 
       .brand {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
       }
 
       .brand img.logo {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
         display: block;
         object-fit: cover;
       }
 
       .brand img.mark {
-        width: 22px;
-        height: 22px;
+        width: 18px;
+        height: 18px;
       }
 
       .brand-text {
         display: grid;
-        gap: 1px;
+        gap: 0;
         min-width: 0;
       }
 
       .brand-text h1 {
         margin: 0;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 650;
         letter-spacing: 0.01em;
       }
 
       .brand-text p {
         margin: 0;
-        font-size: 11px;
+        font-size: 10px;
         color: var(--muted);
       }
 
       .marks {
         display: flex;
         align-items: center;
-        gap: 8px;
         margin-left: auto;
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        padding: 3px;
+        border-radius: 9px;
+        background: rgba(197, 218, 240, 0.08);
+        border: 1px solid var(--line);
+      }
+
+      .tabs button {
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-weight: 650;
+        border-radius: 7px;
+        color: var(--muted);
+        background: transparent;
+        border: 0;
+      }
+
+      .tabs button[aria-selected="true"] {
+        color: var(--bg0);
+        background: linear-gradient(120deg, var(--accent0), var(--accent1));
+      }
+
+      .tabs button:disabled {
+        opacity: 0.45;
+      }
+
+      /* Explicit height (set in JS) so Chrome's popup host doesn't resize on tab switch. */
+      .panels {
+        position: relative;
+        width: 100%;
+      }
+
+      .panel {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        gap: 7px;
+        align-content: start;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .panel.is-active {
+        visibility: visible;
+        pointer-events: auto;
+        z-index: 1;
+      }
+
+      .panel.active-session {
+        align-content: center;
       }
 
       button {
         appearance: none;
         width: 100%;
         border: 0;
-        border-radius: 9px;
-        padding: 9px 12px;
+        border-radius: 8px;
+        padding: 8px 12px;
         font: inherit;
         font-size: 13px;
         font-weight: 650;
@@ -115,25 +171,16 @@
         background: linear-gradient(120deg, #d96a6a, #b84242);
       }
 
-      .active-session {
-        display: grid;
-        gap: 8px;
-      }
-
-      .active-session[hidden] {
-        display: none;
-      }
-
       .active-session__row {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         font-size: 13px;
       }
 
       .active-session__dot {
-        width: 10px;
-        height: 10px;
+        width: 9px;
+        height: 9px;
         border-radius: 50%;
         background: #e25555;
         box-shadow: 0 0 0 0 rgba(226, 85, 85, 0.55);
@@ -156,7 +203,7 @@
       .active-session__actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 8px;
+        gap: 7px;
       }
 
       .active-session__actions button {
@@ -169,12 +216,17 @@
         100% { box-shadow: 0 0 0 0 rgba(226, 85, 85, 0); }
       }
 
+      .options {
+        display: grid;
+        gap: 5px;
+      }
+
       .option {
         display: flex;
         align-items: flex-start;
-        gap: 8px;
-        font-size: 12px;
-        line-height: 1.3;
+        gap: 7px;
+        font-size: 11px;
+        line-height: 1.25;
         color: var(--text);
         cursor: pointer;
         user-select: none;
@@ -189,17 +241,19 @@
       .logo-options {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin: -2px 0 0 22px;
+        gap: 7px;
+        margin: 0 0 0 20px;
       }
 
-      .logo-options[hidden] {
-        display: none;
+      /* Keep space reserved so Record height stays stable when logo is off. */
+      .logo-options.is-collapsed {
+        visibility: hidden;
+        pointer-events: none;
       }
 
       .logo-preview {
-        width: 30px;
-        height: 30px;
+        width: 26px;
+        height: 26px;
         object-fit: contain;
         border-radius: 5px;
         background: rgba(197, 218, 240, 0.08);
@@ -209,26 +263,56 @@
 
       .logo-actions {
         display: grid;
-        gap: 4px;
+        gap: 3px;
         min-width: 0;
         flex: 1;
       }
 
       .logo-actions button {
         width: 100%;
-        padding: 5px 8px;
-        font-size: 11px;
+        padding: 4px 7px;
+        font-size: 10px;
         font-weight: 600;
-        border-radius: 7px;
+        border-radius: 6px;
       }
 
       .logo-actions button:disabled {
         opacity: 0.55;
       }
 
+      /* Reserve the reset-button row so custom-logo state doesn't resize. */
+      .logo-actions button.is-slot-hidden {
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .field {
+        display: grid;
+        grid-template-columns: 72px 1fr;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .field__label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .select {
+        width: 100%;
+        appearance: none;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: rgba(197, 218, 240, 0.08);
+        color: var(--text);
+        font: inherit;
+        font-size: 11px;
+        padding: 5px 7px;
+      }
+
       .status {
         min-height: 1em;
-        font-size: 11px;
+        font-size: 10px;
         color: var(--muted);
       }
 
@@ -238,83 +322,40 @@
 
       .hint {
         margin: 0;
-        font-size: 11px;
-        line-height: 1.35;
+        font-size: 10px;
+        line-height: 1.3;
         color: var(--muted);
-        padding-top: 2px;
-        border-top: 1px solid var(--line);
+        min-height: 2.6em;
       }
 
-      .snapshot {
-        display: grid;
-        gap: 7px;
-        padding-top: 2px;
-        border-top: 1px solid var(--line);
-      }
-
-      .snapshot__title {
-        margin: 0;
-        font-size: 12px;
-        font-weight: 650;
-      }
-
-      .snapshot__row {
-        display: grid;
-        gap: 4px;
-      }
-
-      .snapshot__label {
-        font-size: 11px;
-        color: var(--muted);
-      }
-
-      .snapshot__modes {
+      .modes {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 6px;
+        gap: 5px;
       }
 
-      .snapshot__modes--format {
+      .modes--format {
         grid-template-columns: 1fr 1fr 1fr;
       }
 
-      .snapshot__mode {
+      .mode {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 5px;
         margin: 0;
-        padding: 6px 8px;
-        border-radius: 7px;
+        padding: 5px 6px;
+        border-radius: 6px;
         border: 1px solid var(--line);
         background: rgba(197, 218, 240, 0.08);
-        font-size: 11px;
+        font-size: 10px;
         cursor: pointer;
         user-select: none;
       }
 
-      .snapshot__mode input {
+      .mode input {
         margin: 0;
         accent-color: var(--accent1);
         flex-shrink: 0;
-      }
-
-      .snapshot__delay {
-        width: 100%;
-        appearance: none;
-        border-radius: 7px;
-        border: 1px solid var(--line);
-        background: rgba(197, 218, 240, 0.08);
-        color: var(--text);
-        font: inherit;
-        font-size: 12px;
-        padding: 6px 8px;
-      }
-
-      .snapshot__hint {
-        margin: 0;
-        font-size: 10px;
-        line-height: 1.35;
-        color: var(--muted);
       }
     </style>
   </head>
@@ -325,161 +366,216 @@
           class="logo"
           src="assets/exergy_connect_logo.png"
           alt="Exergy Connect"
-          width="36"
-          height="36"
+          width="32"
+          height="32"
         />
         <div class="brand-text">
           <h1>Exergy ∞ xFrame</h1>
-          <p>Capture this tab’s web session</p>
+          <p>Capture this tab</p>
         </div>
         <div class="marks">
           <img
             class="mark"
             src="assets/favicon.svg"
             alt=""
-            width="22"
-            height="22"
+            width="18"
+            height="18"
           />
         </div>
       </div>
 
-      <label class="option" for="includeLogo">
-        <input id="includeLogo" type="checkbox" checked />
-        <span>Include logo in recording (top right)</span>
-      </label>
-      <div id="logoOptions" class="logo-options">
-        <img
-          id="logoPreview"
-          class="logo-preview"
-          src="assets/exergy_connect_logo.png"
-          alt="Recording logo preview"
-          width="30"
-          height="30"
-        />
-        <div class="logo-actions">
-          <button id="chooseLogo" type="button" class="secondary">
-            Choose custom logo…
-          </button>
-          <button id="resetLogo" type="button" class="secondary" hidden>
-            Use Exergy logo
-          </button>
-        </div>
-        <input
-          id="logoFile"
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-          hidden
-        />
-      </div>
-
-      <label class="option" for="hideControls">
-        <input id="hideControls" type="checkbox" checked />
-        <span>Hide recording controls from the video</span>
-      </label>
-
-      <label class="option" for="includePointer">
-        <input id="includePointer" type="checkbox" />
-        <span>Include mouse pointer in recording</span>
-      </label>
-
-      <div class="snapshot" id="snapshotPanel">
-        <p class="snapshot__title">Snapshot</p>
-        <div class="snapshot__row">
-          <span class="snapshot__label">Capture</span>
-          <div class="snapshot__modes">
-            <label class="snapshot__mode" for="snapshotModeFull">
-              <input
-                id="snapshotModeFull"
-                type="radio"
-                name="snapshotMode"
-                value="full"
-                checked
-              />
-              <span>Visible tab</span>
-            </label>
-            <label class="snapshot__mode" for="snapshotModeRegion">
-              <input
-                id="snapshotModeRegion"
-                type="radio"
-                name="snapshotMode"
-                value="region"
-              />
-              <span>Select region</span>
-            </label>
-          </div>
-        </div>
-        <div class="snapshot__row">
-          <label class="snapshot__label" for="snapshotDelay">Delay</label>
-          <select id="snapshotDelay" class="snapshot__delay">
-            <option value="0">None</option>
-            <option value="3">3 seconds</option>
-            <option value="5" selected>5 seconds</option>
-            <option value="10">10 seconds</option>
-          </select>
-        </div>
-        <label class="option" for="snapshotLinkedIn">
-          <input id="snapshotLinkedIn" type="checkbox" />
-          <span>Optimize for LinkedIn (1280×644)</span>
-        </label>
-        <div class="snapshot__row">
-          <span class="snapshot__label">Format</span>
-          <div class="snapshot__modes snapshot__modes--format">
-            <label class="snapshot__mode" for="snapshotFormatPng">
-              <input
-                id="snapshotFormatPng"
-                type="radio"
-                name="snapshotFormat"
-                value="png"
-                checked
-              />
-              <span>PNG (best)</span>
-            </label>
-            <label class="snapshot__mode" for="snapshotFormatJpg">
-              <input
-                id="snapshotFormatJpg"
-                type="radio"
-                name="snapshotFormat"
-                value="jpg"
-              />
-              <span>JPG</span>
-            </label>
-            <label class="snapshot__mode" for="snapshotFormatGif">
-              <input
-                id="snapshotFormatGif"
-                type="radio"
-                name="snapshotFormat"
-                value="gif"
-              />
-              <span>GIF (small)</span>
-            </label>
-          </div>
-        </div>
-        <button id="snapshot" type="button" class="secondary">
-          Take snapshot
+      <div class="tabs" role="tablist" aria-label="Capture mode">
+        <button
+          id="tabRecord"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="recordPanel"
+        >
+          Record
         </button>
-        <p class="snapshot__hint">
-          Shortcut: Alt+Shift+S (change under chrome://extensions/shortcuts)
-        </p>
+        <button
+          id="tabSnapshot"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="snapshotPanel"
+        >
+          Snapshot
+        </button>
       </div>
 
-      <button id="start" type="button">Start session</button>
+      <div class="panels">
+        <div
+          id="recordPanel"
+          class="panel is-active"
+          role="tabpanel"
+          aria-labelledby="tabRecord"
+        >
+          <div class="options">
+            <label class="option" for="includeLogo">
+              <input id="includeLogo" type="checkbox" checked />
+              <span>Include logo (top right)</span>
+            </label>
+            <div id="logoOptions" class="logo-options">
+              <img
+                id="logoPreview"
+                class="logo-preview"
+                src="assets/exergy_connect_logo.png"
+                alt="Recording logo preview"
+                width="26"
+                height="26"
+              />
+              <div class="logo-actions">
+                <button id="chooseLogo" type="button" class="secondary">
+                  Choose custom logo…
+                </button>
+              <button id="resetLogo" type="button" class="secondary is-slot-hidden">
+                Use Exergy logo
+              </button>
+              </div>
+              <input
+                id="logoFile"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                hidden
+              />
+            </div>
 
-      <div id="activeSession" class="active-session" hidden>
-        <div class="active-session__row">
-          <span class="active-session__dot" aria-hidden="true"></span>
-          <span id="activeTime" class="active-session__time">00:00</span>
+            <label class="option" for="hideControls">
+              <input id="hideControls" type="checkbox" checked />
+              <span>Hide controls from the video</span>
+            </label>
+
+            <label class="option" for="includePointer">
+              <input id="includePointer" type="checkbox" />
+              <span>Include mouse pointer</span>
+            </label>
+
+            <label class="option" for="includeAudio">
+              <input id="includeAudio" type="checkbox" checked />
+              <span>Include tab audio</span>
+            </label>
+
+            <label class="option" for="videoLinkedIn">
+              <input id="videoLinkedIn" type="checkbox" />
+              <span>Optimize for LinkedIn</span>
+            </label>
+
+            <div class="field">
+              <label class="field__label" for="videoQuality">Quality</label>
+              <select id="videoQuality" class="select">
+                <option value="efficient">Efficient (~2 Mbps)</option>
+                <option value="standard" selected>Standard (~5 Mbps)</option>
+                <option value="high">High (~8 Mbps)</option>
+                <option value="linkedin" hidden>LinkedIn (~6 Mbps)</option>
+              </select>
+            </div>
+          </div>
+
+          <button id="start" type="button">Start session</button>
         </div>
-        <div class="active-session__actions">
-          <button id="pause" type="button" class="secondary">Pause</button>
-          <button id="stop" type="button" class="danger">Stop &amp; save</button>
+
+        <div
+          id="snapshotPanel"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tabSnapshot"
+        >
+          <div class="field">
+            <span class="field__label">Capture</span>
+            <div class="modes">
+              <label class="mode" for="snapshotModeFull">
+                <input
+                  id="snapshotModeFull"
+                  type="radio"
+                  name="snapshotMode"
+                  value="full"
+                  checked
+                />
+                <span>Visible tab</span>
+              </label>
+              <label class="mode" for="snapshotModeRegion">
+                <input
+                  id="snapshotModeRegion"
+                  type="radio"
+                  name="snapshotMode"
+                  value="region"
+                />
+                <span>Region</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="snapshotDelay">Delay</label>
+            <select id="snapshotDelay" class="select">
+              <option value="0">None</option>
+              <option value="3">3 seconds</option>
+              <option value="5" selected>5 seconds</option>
+              <option value="10">10 seconds</option>
+            </select>
+          </div>
+
+          <label class="option" for="snapshotLinkedIn">
+            <input id="snapshotLinkedIn" type="checkbox" />
+            <span>Optimize for LinkedIn (1280×644)</span>
+          </label>
+
+          <div class="field">
+            <span class="field__label">Format</span>
+            <div class="modes modes--format">
+              <label class="mode" for="snapshotFormatPng">
+                <input
+                  id="snapshotFormatPng"
+                  type="radio"
+                  name="snapshotFormat"
+                  value="png"
+                  checked
+                />
+                <span>PNG</span>
+              </label>
+              <label class="mode" for="snapshotFormatJpg">
+                <input
+                  id="snapshotFormatJpg"
+                  type="radio"
+                  name="snapshotFormat"
+                  value="jpg"
+                />
+                <span>JPG</span>
+              </label>
+              <label class="mode" for="snapshotFormatGif">
+                <input
+                  id="snapshotFormatGif"
+                  type="radio"
+                  name="snapshotFormat"
+                  value="gif"
+                />
+                <span>GIF</span>
+              </label>
+            </div>
+          </div>
+
+          <button id="snapshot" type="button" class="secondary">
+            Take snapshot
+          </button>
+        </div>
+
+        <div id="activeSession" class="panel active-session">
+          <div class="active-session__row">
+            <span class="active-session__dot" aria-hidden="true"></span>
+            <span id="activeTime" class="active-session__time">00:00</span>
+          </div>
+          <div class="active-session__actions">
+            <button id="pause" type="button" class="secondary">Pause</button>
+            <button id="stop" type="button" class="danger">Stop &amp; save</button>
+          </div>
         </div>
       </div>
 
       <div id="status" class="status" role="status"></div>
-      <p class="hint">
-        A 3-second countdown appears on the tab, then recording begins. If
-        controls are hidden, reopen this popup to pause or stop. Snapshots
-        download as PNG, JPG, or GIF after the chosen delay.
+      <p id="hint" class="hint">
+        3-second countdown, then recording begins. Reopen to pause or stop.
       </p>
     </main>
     <script src="popup.js"></script>

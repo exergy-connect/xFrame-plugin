@@ -35,7 +35,8 @@ It is the first conceptual twin.
 ## Features
 
 - Record the current browser tab
-- Capture tab audio together with video
+- Optional tab audio capture together with video
+- Video quality presets (Efficient / Standard / High) plus **Optimize for LinkedIn** (~6 Mbps, prefer H.264)
 - Save directly as MP4
 - Take a snapshot of the visible tab (full viewport or a selected region), with optional LinkedIn 1280×644 sizing and PNG/JPG/GIF output
 - Customize the recording logo
@@ -45,7 +46,7 @@ It is the first conceptual twin.
 - Optional recording controls (popup or keyboard shortcuts)
 - Optional mouse pointer overlay
 
-Typical recordings are approximately **0.3–1 MB/s** (about **18–60 MB/min**), depending on resolution, motion, and audio.
+Typical recordings are approximately **0.25–1 MB/s** depending on the quality preset, resolution, motion, and whether audio is included (Efficient ≈ 2 Mbps video; Standard ≈ 5 Mbps; High ≈ 8 Mbps).
 
 ## Philosophy
 
@@ -77,8 +78,11 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 | Include logo in recording | On | Watermark in the top-right (Exergy by default; choose a custom image in the popup) |
 | Hide recording controls from the video | On | Omits the on-page session bar from the recording; reopen the popup (or use keys) to pause/stop |
 | Include mouse pointer in recording | Off | Draws a captureable pointer overlay; otherwise the cursor is hidden from the capture |
+| Include tab audio in recording | On | Captures tab audio with the video; turn off for silent recordings |
+| Optimize for LinkedIn | Off | Selects the LinkedIn quality profile (~6 Mbps) and prefers H.264 + AAC for upload-friendly MP4 |
+| Video quality | Standard (~5 Mbps) | Efficient (~2 Mbps), Standard (~5 Mbps), or High (~8 Mbps); locked to LinkedIn when that option is on |
 
-A custom recording logo is stored in extension storage and reused until you reset to the Exergy logo.
+Recording and snapshot settings live on separate popup tabs (**Record** / **Snapshot**) so the popup stays compact. A custom recording logo is stored in extension storage and reused until you reset to the Exergy logo. Audio and quality preferences are remembered between sessions.
 
 ### During a session
 
@@ -150,9 +154,9 @@ sequenceDiagram
 ```
 
 1. **Start** — The popup asks the service worker to begin a session on the active tab (with the chosen options).
-2. **Acquire** — The worker obtains a `tabCapture` stream id, opens an offscreen document, and the recorder calls `getUserMedia` with the tab media source (video + tab audio when available). Tab audio is also routed to the local `AudioContext` so you can still hear the page. Capture requests `cursor: never` unless “Include mouse pointer” is on.
+2. **Acquire** — The worker obtains a `tabCapture` stream id, opens an offscreen document, and the recorder calls `getUserMedia` with the tab media source (video, plus tab audio when enabled). Tab audio is also routed to the local `AudioContext` so you can still hear the page. Capture requests `cursor: never` unless “Include mouse pointer” is on, and aims for 30 fps.
 3. **Countdown** — A content overlay counts down for about three seconds.
-4. **Record** — After the overlay clears, `MediaRecorder` starts (MP4 when the browser can actually record it; otherwise WebM). The native cursor is hidden on the page; optional logo / pointer overlays and session UI follow the start options.
+4. **Record** — After the overlay clears, `MediaRecorder` starts with the chosen quality bitrates (MP4 when the browser can actually record it; otherwise WebM). Tab audio is captured only when enabled. The native cursor is hidden on the page; optional logo / pointer overlays and session UI follow the start options.
 5. **Stop & save** — The offscreen recorder stores the blob in IndexedDB. A short-lived `saver.html` page (needed because service workers lack `URL.createObjectURL`) reads the blob, downloads it via `chrome.downloads`, revokes the URL, and closes.
 
 ### Implementation notes

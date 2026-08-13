@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Exergy ∞ xFrame",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Exergy ∞ xFrame records a web session as MP4 and takes PNG snapshots of the visible tab.",
   "icons": {
     "16": "icons/icon16.png",

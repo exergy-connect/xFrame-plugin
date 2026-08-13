@@ -1,17 +1,27 @@
 const DEFAULT_LOGO_URL = "assets/exergy_connect_logo.png";
 const LOGO_STORAGE_KEY = "customLogoDataUrl";
+const INCLUDE_AUDIO_KEY = "includeAudio";
+const VIDEO_QUALITY_KEY = "videoQuality";
+const VIDEO_LINKEDIN_KEY = "videoLinkedIn";
 const SNAPSHOT_MODE_KEY = "snapshotMode";
 const SNAPSHOT_DELAY_KEY = "snapshotDelay";
 const SNAPSHOT_LINKEDIN_KEY = "snapshotLinkedIn";
 const SNAPSHOT_FORMAT_KEY = "snapshotFormat";
 const SNAPSHOT_JPG_KEY = "snapshotJpg"; // legacy
 const MAX_LOGO_BYTES = 500_000;
+const DEFAULT_VIDEO_QUALITY = "standard";
 
 const startBtn = document.getElementById("start");
 const snapshotBtn = document.getElementById("snapshot");
 const pauseBtn = document.getElementById("pause");
 const stopBtn = document.getElementById("stop");
 const statusEl = document.getElementById("status");
+const hintEl = document.getElementById("hint");
+const tabRecordEl = document.getElementById("tabRecord");
+const tabSnapshotEl = document.getElementById("tabSnapshot");
+const panelsEl = document.querySelector(".panels");
+const recordPanelEl = document.getElementById("recordPanel");
+const snapshotPanelEl = document.getElementById("snapshotPanel");
 const includeLogoEl = document.getElementById("includeLogo");
 const logoOptionsEl = document.getElementById("logoOptions");
 const logoPreviewEl = document.getElementById("logoPreview");
@@ -20,6 +30,12 @@ const resetLogoBtn = document.getElementById("resetLogo");
 const logoFileEl = document.getElementById("logoFile");
 const hideControlsEl = document.getElementById("hideControls");
 const includePointerEl = document.getElementById("includePointer");
+const includeAudioEl = document.getElementById("includeAudio");
+const videoLinkedInEl = document.getElementById("videoLinkedIn");
+const videoQualityEl = document.getElementById("videoQuality");
+const videoQualityLinkedInOption = videoQualityEl.querySelector(
+  'option[value="linkedin"]'
+);
 const activeSessionEl = document.getElementById("activeSession");
 const activeTimeEl = document.getElementById("activeTime");
 const snapshotModeFullEl = document.getElementById("snapshotModeFull");
@@ -30,15 +46,47 @@ const snapshotFormatPngEl = document.getElementById("snapshotFormatPng");
 const snapshotFormatJpgEl = document.getElementById("snapshotFormatJpg");
 const snapshotFormatGifEl = document.getElementById("snapshotFormatGif");
 
+const HINTS = {
+  record:
+    "3-second countdown, then recording begins. Reopen to pause or stop.",
+  snapshot: "Shortcut: Alt+Shift+S (chrome://extensions/shortcuts).",
+  active: "Session in progress. Pause or stop here, or press P / S on the tab.",
+};
+
 let timerId = null;
 let statusSnapshot = null;
 let customLogoDataUrl = null;
+let activeTab = "record";
+let uiBusy = false;
+let lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
 
 initLogoSettings();
+initRecordingSettings();
 initSnapshotSettings();
+setCaptureTab("record");
+lockPanelsHeight();
 refreshStatus();
+requestAnimationFrame(() => lockPanelsHeight());
 
-includeLogoEl.addEventListener("change", syncLogoOptionsVisibility);
+tabRecordEl.addEventListener("click", () => setCaptureTab("record"));
+tabSnapshotEl.addEventListener("click", () => setCaptureTab("snapshot"));
+
+includeLogoEl.addEventListener("change", () => {
+  syncLogoOptionsVisibility();
+  lockPanelsHeight();
+});
+includeAudioEl.addEventListener("change", persistRecordingSettings);
+videoLinkedInEl.addEventListener("change", () => {
+  syncVideoLinkedInUi();
+  persistRecordingSettings();
+  lockPanelsHeight();
+});
+videoQualityEl.addEventListener("change", () => {
+  if (!videoLinkedInEl.checked) {
+    lastManualVideoQuality = selectedVideoQuality();
+  }
+  persistRecordingSettings();
+});
 
 chooseLogoBtn.addEventListener("click", () => {
   logoFileEl.click();
@@ -48,6 +96,7 @@ resetLogoBtn.addEventListener("click", async () => {
   customLogoDataUrl = null;
   await chrome.storage.local.remove(LOGO_STORAGE_KEY);
   applyLogoPreview();
+  lockPanelsHeight();
   setStatus("Using the Exergy logo.");
 });
 
@@ -70,6 +119,7 @@ logoFileEl.addEventListener("change", async () => {
     customLogoDataUrl = dataUrl;
     await chrome.storage.local.set({ [LOGO_STORAGE_KEY]: dataUrl });
     applyLogoPreview();
+    lockPanelsHeight();
     setStatus("Custom logo saved.");
   } catch (error) {
     setStatus(String(error?.message || error), true);
@@ -90,12 +140,15 @@ startBtn.addEventListener("click", async () => {
   setStatus("Starting session…");
 
   try {
+    await persistRecordingSettings();
     const result = await chrome.runtime.sendMessage({
       type: "frameit-start-session",
       includeLogo: includeLogoEl.checked,
       logoDataUrl: includeLogoEl.checked ? customLogoDataUrl : null,
       hideControls: hideControlsEl.checked,
       includePointer: includePointerEl.checked,
+      includeAudio: includeAudioEl.checked,
+      videoQuality: selectedVideoQuality(),
     });
     if (!result?.ok) {
       throw new Error(result?.error || "Could not start session");
@@ -205,6 +258,72 @@ async function initLogoSettings() {
   syncLogoOptionsVisibility();
 }
 
+async function initRecordingSettings() {
+  try {
+    const stored = await chrome.storage.local.get([
+      INCLUDE_AUDIO_KEY,
+      VIDEO_QUALITY_KEY,
+      VIDEO_LINKEDIN_KEY,
+    ]);
+    includeAudioEl.checked = stored?.[INCLUDE_AUDIO_KEY] !== false;
+    const storedQuality = normalizeVideoQuality(stored?.[VIDEO_QUALITY_KEY]);
+    const linkedIn =
+      stored?.[VIDEO_LINKEDIN_KEY] === true || storedQuality === "linkedin";
+    lastManualVideoQuality =
+      storedQuality === "linkedin" ? DEFAULT_VIDEO_QUALITY : storedQuality;
+    videoLinkedInEl.checked = linkedIn;
+    syncVideoLinkedInUi();
+  } catch (_error) {
+    includeAudioEl.checked = true;
+    videoLinkedInEl.checked = false;
+    lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
+    syncVideoLinkedInUi();
+  }
+}
+
+async function persistRecordingSettings() {
+  await chrome.storage.local.set({
+    [INCLUDE_AUDIO_KEY]: includeAudioEl.checked,
+    [VIDEO_LINKEDIN_KEY]: videoLinkedInEl.checked,
+    [VIDEO_QUALITY_KEY]: selectedVideoQuality(),
+  });
+}
+
+function selectedVideoQuality() {
+  if (videoLinkedInEl.checked) return "linkedin";
+  return normalizeVideoQuality(videoQualityEl.value);
+}
+
+function normalizeVideoQuality(value) {
+  if (
+    value === "efficient" ||
+    value === "high" ||
+    value === "standard" ||
+    value === "linkedin"
+  ) {
+    return value;
+  }
+  return DEFAULT_VIDEO_QUALITY;
+}
+
+function syncVideoLinkedInUi() {
+  if (videoLinkedInEl.checked) {
+    if (videoQualityLinkedInOption) {
+      videoQualityLinkedInOption.hidden = false;
+    }
+    videoQualityEl.value = "linkedin";
+    videoQualityEl.disabled = true;
+  } else {
+    if (videoQualityLinkedInOption) {
+      videoQualityLinkedInOption.hidden = true;
+    }
+    const restore = normalizeVideoQuality(lastManualVideoQuality);
+    videoQualityEl.value =
+      restore === "linkedin" ? DEFAULT_VIDEO_QUALITY : restore;
+    videoQualityEl.disabled = uiBusy;
+  }
+}
+
 async function initSnapshotSettings() {
   try {
     const stored = await chrome.storage.local.get([
@@ -268,11 +387,80 @@ function normalizePopupSnapshotFormat(value, legacyJpg) {
 
 function applyLogoPreview() {
   logoPreviewEl.src = customLogoDataUrl || DEFAULT_LOGO_URL;
-  resetLogoBtn.hidden = !customLogoDataUrl;
+  resetLogoBtn.classList.toggle("is-slot-hidden", !customLogoDataUrl);
 }
 
 function syncLogoOptionsVisibility() {
-  logoOptionsEl.hidden = !includeLogoEl.checked;
+  logoOptionsEl.classList.toggle("is-collapsed", !includeLogoEl.checked);
+}
+
+function lockPanelsHeight() {
+  if (!panelsEl) return;
+
+  const previousHeight = panelsEl.style.height;
+  panelsEl.style.height = "auto";
+
+  const heights = [recordPanelEl, snapshotPanelEl].map((panel) => {
+    const prev = {
+      position: panel.style.position,
+      visibility: panel.style.visibility,
+      pointerEvents: panel.style.pointerEvents,
+      inset: panel.style.inset,
+      height: panel.style.height,
+    };
+    panel.style.position = "static";
+    panel.style.visibility = "hidden";
+    panel.style.pointerEvents = "none";
+    panel.style.inset = "auto";
+    panel.style.height = "auto";
+    const height = panel.getBoundingClientRect().height;
+    panel.style.position = prev.position;
+    panel.style.visibility = prev.visibility;
+    panel.style.pointerEvents = prev.pointerEvents;
+    panel.style.inset = prev.inset;
+    panel.style.height = prev.height;
+    return height;
+  });
+
+  const next = `${Math.ceil(Math.max(0, ...heights))}px`;
+  panelsEl.style.height = next || previousHeight;
+}
+
+function setPanelActive(panelEl) {
+  recordPanelEl.classList.toggle("is-active", panelEl === recordPanelEl);
+  snapshotPanelEl.classList.toggle("is-active", panelEl === snapshotPanelEl);
+  activeSessionEl.classList.toggle("is-active", panelEl === activeSessionEl);
+  recordPanelEl.setAttribute(
+    "aria-hidden",
+    String(panelEl !== recordPanelEl)
+  );
+  snapshotPanelEl.setAttribute(
+    "aria-hidden",
+    String(panelEl !== snapshotPanelEl)
+  );
+  activeSessionEl.setAttribute(
+    "aria-hidden",
+    String(panelEl !== activeSessionEl)
+  );
+}
+
+function setCaptureTab(tab) {
+  if (uiBusy) return;
+  activeTab = tab === "snapshot" ? "snapshot" : "record";
+
+  const isRecord = activeTab === "record";
+  tabRecordEl.setAttribute("aria-selected", String(isRecord));
+  tabSnapshotEl.setAttribute("aria-selected", String(!isRecord));
+  setPanelActive(isRecord ? recordPanelEl : snapshotPanelEl);
+
+  if (!statusSnapshot) {
+    hintEl.textContent = HINTS[activeTab];
+  }
+}
+
+function setTabsDisabled(disabled) {
+  tabRecordEl.disabled = disabled;
+  tabSnapshotEl.disabled = disabled;
 }
 
 async function refreshStatus() {
@@ -301,31 +489,39 @@ async function refreshStatus() {
 
 function showIdle() {
   clearTimer();
-  startBtn.hidden = false;
+  uiBusy = false;
   startBtn.disabled = false;
   snapshotBtn.disabled = false;
   setOptionsDisabled(false);
   setSnapshotControlsDisabled(false);
-  activeSessionEl.hidden = true;
+  setTabsDisabled(false);
+  setCaptureTab(activeTab || "record");
 }
 
 function showSnapshotBusy(_status) {
   clearTimer();
-  startBtn.hidden = false;
+  uiBusy = false;
+  setCaptureTab("snapshot");
   startBtn.disabled = true;
   snapshotBtn.disabled = true;
   setOptionsDisabled(false);
   setSnapshotControlsDisabled(true);
-  activeSessionEl.hidden = true;
+  setTabsDisabled(false);
+  hintEl.textContent = HINTS.snapshot;
 }
 
 function showActive(status) {
-  startBtn.hidden = true;
+  uiBusy = true;
+  activeTab = "record";
+  tabRecordEl.setAttribute("aria-selected", "true");
+  tabSnapshotEl.setAttribute("aria-selected", "false");
+  setPanelActive(activeSessionEl);
   snapshotBtn.disabled = true;
   setOptionsDisabled(true);
   setSnapshotControlsDisabled(true);
-  activeSessionEl.hidden = false;
+  setTabsDisabled(true);
   activeSessionEl.classList.toggle("is-paused", Boolean(status.paused));
+  hintEl.textContent = HINTS.active;
 
   const canControl = status.phase === "recording";
   pauseBtn.disabled = !canControl;
@@ -349,9 +545,16 @@ function setOptionsDisabled(disabled) {
   includeLogoEl.disabled = disabled;
   hideControlsEl.disabled = disabled;
   includePointerEl.disabled = disabled;
+  includeAudioEl.disabled = disabled;
+  videoLinkedInEl.disabled = disabled;
   chooseLogoBtn.disabled = disabled;
   resetLogoBtn.disabled = disabled;
   logoFileEl.disabled = disabled;
+  if (disabled) {
+    videoQualityEl.disabled = true;
+  } else {
+    syncVideoLinkedInUi();
+  }
 }
 
 function setSnapshotControlsDisabled(disabled) {

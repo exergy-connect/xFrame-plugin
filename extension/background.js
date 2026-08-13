@@ -19,6 +19,21 @@ const LINKEDIN_HEIGHT = 644;
 /** High-quality JPEG encode quality (0–1) for A/B tests vs PNG. */
 const JPEG_QUALITY = 0.95;
 
+/** Recording quality presets → MediaRecorder bitrates. */
+const VIDEO_QUALITY_PRESETS = {
+  efficient: { videoBitsPerSecond: 2_000_000, audioBitsPerSecond: 128_000 },
+  standard: { videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 192_000 },
+  high: { videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 },
+  // LinkedIn feed: ~5–8 Mbps @ 1080p30, prefer H.264 + AAC at encode time.
+  linkedin: { videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 192_000 },
+};
+const DEFAULT_VIDEO_QUALITY = "standard";
+
+function resolveVideoQuality(value) {
+  const key = typeof value === "string" ? value.toLowerCase() : "";
+  return VIDEO_QUALITY_PRESETS[key] ? key : DEFAULT_VIDEO_QUALITY;
+}
+
 const CONTENT_SESSION_TYPES = new Set([
   "frameit-countdown-done",
   "frameit-stop-session",
@@ -77,6 +92,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       logoDataUrl: normalizeLogoDataUrl(message.logoDataUrl),
       hideControls: message.hideControls !== false,
       includePointer: Boolean(message.includePointer),
+      includeAudio: message.includeAudio !== false,
+      videoQuality: message.videoQuality,
     })
       .then(() => sendResponse({ ok: true }))
       .catch((error) =>
@@ -606,6 +623,8 @@ async function startSession({
   logoDataUrl = null,
   hideControls = true,
   includePointer = false,
+  includeAudio = true,
+  videoQuality = DEFAULT_VIDEO_QUALITY,
 } = {}) {
   await ensureSessionRestored();
   if (snapshotState) {
@@ -620,6 +639,8 @@ async function startSession({
 
   const tabTitle = tab.title || "Session";
   const sessionStartedAt = new Date();
+  const qualityKey = resolveVideoQuality(videoQuality);
+  const bitrates = VIDEO_QUALITY_PRESETS[qualityKey];
 
   session = {
     tabId: tab.id,
@@ -631,6 +652,11 @@ async function startSession({
     logoDataUrl: includeLogo ? normalizeLogoDataUrl(logoDataUrl) : null,
     hideControls: Boolean(hideControls),
     includePointer: Boolean(includePointer),
+    includeAudio: includeAudio !== false,
+    videoQuality: qualityKey,
+    preferLinkedIn: qualityKey === "linkedin",
+    videoBitsPerSecond: bitrates.videoBitsPerSecond,
+    audioBitsPerSecond: bitrates.audioBitsPerSecond,
     paused: false,
     pausedAt: 0,
     totalPausedMs: 0,
@@ -647,6 +673,7 @@ async function startSession({
       type: "frameit-acquire-stream",
       streamId,
       includePointer: Boolean(includePointer),
+      includeAudio: session.includeAudio,
     });
     if (!acquired?.ok) {
       throw new Error(acquired?.error || "Failed to acquire tab stream");
@@ -668,7 +695,17 @@ async function onCountdownDone() {
     return;
   }
 
-  const started = await sendToOffscreen({ type: "frameit-start-recording" });
+  const started = await sendToOffscreen({
+    type: "frameit-start-recording",
+    videoBitsPerSecond:
+      session.videoBitsPerSecond ||
+      VIDEO_QUALITY_PRESETS[DEFAULT_VIDEO_QUALITY].videoBitsPerSecond,
+    audioBitsPerSecond: session.includeAudio
+      ? session.audioBitsPerSecond ||
+        VIDEO_QUALITY_PRESETS[DEFAULT_VIDEO_QUALITY].audioBitsPerSecond
+      : undefined,
+    preferLinkedIn: Boolean(session.preferLinkedIn) || session.videoQuality === "linkedin",
+  });
   if (!started?.ok) {
     await abortSession();
     throw new Error(started?.error || "Failed to start recording");

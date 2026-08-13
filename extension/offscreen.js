@@ -6,6 +6,14 @@ const MIME_CANDIDATES = [
   "video/webm",
 ];
 
+/** Prefer H.264+AAC for LinkedIn; skip bare video/mp4 (may encode as VP9). */
+const LINKEDIN_MIME_CANDIDATES = [
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1.4D401F,mp4a.40.2",
+  "video/webm;codecs=vp8,opus",
+  "video/webm",
+];
+
 const OFFSCREEN_ONLY_TYPES = new Set([
   "frameit-offscreen-ping",
   "frameit-recorder-status",
@@ -17,11 +25,18 @@ const OFFSCREEN_ONLY_TYPES = new Set([
   "frameit-discard",
 ]);
 
+const DEFAULT_VIDEO_BITS = 5_000_000;
+const DEFAULT_AUDIO_BITS = 192_000;
+
 let captureStream = null;
 let audioContext = null;
 let mediaRecorder = null;
 let recordedChunks = [];
 let activeMimeType = "";
+let includeAudio = true;
+let preferLinkedIn = false;
+let videoBitsPerSecond = DEFAULT_VIDEO_BITS;
+let audioBitsPerSecond = DEFAULT_AUDIO_BITS;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
@@ -44,6 +59,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "frameit-acquire-stream") {
     acquireStream(message.streamId, {
       includePointer: Boolean(message.includePointer),
+      includeAudio: message.includeAudio !== false,
     })
       .then(() => sendResponse({ ok: true }))
       .catch((error) =>
@@ -53,7 +69,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "frameit-start-recording") {
-    startRecording()
+    startRecording({
+      videoBitsPerSecond: message.videoBitsPerSecond,
+      audioBitsPerSecond: message.audioBitsPerSecond,
+      preferLinkedIn: Boolean(message.preferLinkedIn),
+    })
       .then((mimeType) => sendResponse({ ok: true, mimeType }))
       .catch((error) =>
         sendResponse({ ok: false, error: String(error?.message || error) })
@@ -117,9 +137,13 @@ function getRecorderStatus() {
   };
 }
 
-async function acquireStream(streamId, { includePointer = false } = {}) {
+async function acquireStream(
+  streamId,
+  { includePointer = false, includeAudio: wantAudio = true } = {}
+) {
   cleanup();
 
+  includeAudio = Boolean(wantAudio);
   const cursor = includePointer ? "always" : "never";
 
   async function openStream(withAudio) {
@@ -156,6 +180,7 @@ async function acquireStream(streamId, { includePointer = false } = {}) {
           video,
         });
         await applyCursorConstraint(stream, cursor);
+        await applyFrameRateConstraint(stream);
         return stream;
       } catch (error) {
         lastError = error;
@@ -164,14 +189,18 @@ async function acquireStream(streamId, { includePointer = false } = {}) {
     throw lastError || new Error("Failed to acquire tab stream");
   }
 
-  try {
-    captureStream = await openStream(true);
-  } catch (_audioError) {
+  if (includeAudio) {
+    try {
+      captureStream = await openStream(true);
+    } catch (_audioError) {
+      captureStream = await openStream(false);
+    }
+  } else {
     captureStream = await openStream(false);
   }
 
   const audioTracks = captureStream.getAudioTracks();
-  if (audioTracks.length > 0) {
+  if (includeAudio && audioTracks.length > 0) {
     audioContext = new AudioContext();
     const source = audioContext.createMediaStreamSource(captureStream);
     source.connect(audioContext.destination);
@@ -192,8 +221,35 @@ async function applyCursorConstraint(stream, cursor) {
   }
 }
 
+async function applyFrameRateConstraint(stream) {
+  const [track] = stream.getVideoTracks();
+  if (!track?.applyConstraints) return;
+  try {
+    await track.applyConstraints({ frameRate: { ideal: 30, max: 30 } });
+  } catch (_error) {
+    // Frame-rate constraint unsupported; MediaRecorder defaults apply.
+  }
+}
+
+function normalizeBitrate(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.round(n);
+}
+
+function buildRecorderOptions(mimeType) {
+  const options = {};
+  if (mimeType) options.mimeType = mimeType;
+  options.videoBitsPerSecond = videoBitsPerSecond;
+  if (includeAudio && captureStream?.getAudioTracks?.().some((t) => t.readyState === "live")) {
+    options.audioBitsPerSecond = audioBitsPerSecond;
+  }
+  return options;
+}
+
 async function pickMimeType(stream) {
-  for (const mimeType of MIME_CANDIDATES) {
+  const candidates = preferLinkedIn ? LINKEDIN_MIME_CANDIDATES : MIME_CANDIDATES;
+  for (const mimeType of candidates) {
     if (!MediaRecorder.isTypeSupported(mimeType)) continue;
     try {
       await probeRecorder(stream, mimeType);
@@ -211,9 +267,7 @@ function probeRecorder(stream, mimeType) {
   return new Promise((resolve, reject) => {
     let recorder;
     try {
-      recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream);
+      recorder = new MediaRecorder(stream, buildRecorderOptions(mimeType));
     } catch (error) {
       reject(error);
       return;
@@ -246,17 +300,26 @@ function probeRecorder(stream, mimeType) {
   });
 }
 
-async function startRecording() {
+async function startRecording({
+  videoBitsPerSecond: videoBits,
+  audioBitsPerSecond: audioBits,
+  preferLinkedIn: wantLinkedIn = false,
+} = {}) {
   if (!captureStream) {
     throw new Error("Capture stream is not ready");
   }
 
+  preferLinkedIn = Boolean(wantLinkedIn);
+  videoBitsPerSecond = normalizeBitrate(videoBits, DEFAULT_VIDEO_BITS);
+  audioBitsPerSecond = normalizeBitrate(audioBits, DEFAULT_AUDIO_BITS);
+
   recordedChunks = [];
   activeMimeType = await pickMimeType(captureStream);
 
-  mediaRecorder = activeMimeType
-    ? new MediaRecorder(captureStream, { mimeType: activeMimeType })
-    : new MediaRecorder(captureStream);
+  mediaRecorder = new MediaRecorder(
+    captureStream,
+    buildRecorderOptions(activeMimeType || undefined)
+  );
 
   activeMimeType = mediaRecorder.mimeType || activeMimeType || "video/webm";
 
@@ -339,6 +402,10 @@ function cleanup() {
   mediaRecorder = null;
   recordedChunks = [];
   activeMimeType = "";
+  includeAudio = true;
+  preferLinkedIn = false;
+  videoBitsPerSecond = DEFAULT_VIDEO_BITS;
+  audioBitsPerSecond = DEFAULT_AUDIO_BITS;
 
   if (captureStream) {
     for (const track of captureStream.getTracks()) {
