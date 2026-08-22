@@ -7,45 +7,103 @@
  */
 
 function encodeRgbaToGif(rgba, width, height) {
+  return encodeRgbaFramesToGif(
+    [{ rgba, delayCs: 0 }],
+    width,
+    height,
+    { loop: false }
+  );
+}
+
+/**
+ * Multi-frame animated GIF89a.
+ * @param {Array<{ rgba: Uint8Array|Uint8ClampedArray, delayCs?: number, delaySeconds?: number }>} frames
+ * @param {number} width
+ * @param {number} height
+ * @param {{ loop?: boolean }} [options]
+ */
+function encodeRgbaFramesToGif(frames, width, height, options = {}) {
   const w = width | 0;
   const h = height | 0;
-  if (!(rgba instanceof Uint8ClampedArray || rgba instanceof Uint8Array)) {
-    throw new Error("GIF encode expects RGBA bytes");
+  if (!Array.isArray(frames) || frames.length === 0) {
+    throw new Error("GIF encode expects at least one frame");
   }
-  if (w <= 0 || h <= 0 || rgba.length < w * h * 4) {
+  if (w <= 0 || h <= 0) {
     throw new Error("Invalid GIF dimensions");
   }
 
-  const { palette, indices, colorCount } = quantizeRgbaToGifPalette(rgba, w, h);
-  let gctSize = 0;
-  while (2 ** (gctSize + 1) < colorCount && gctSize < 7) gctSize += 1;
-  const gctColors = 2 ** (gctSize + 1);
-  const colorDepth = gctSize + 1;
-
+  const loop = options.loop !== false;
   const out = [];
   writeBytes(out, asciiBytes("GIF89a"));
   writeUint16(out, w);
   writeUint16(out, h);
-  out.push(0x80 | gctSize);
+  // No global color table; each frame uses a local table.
+  out.push(0x70); // color resolution 8 bits, no GCT
   out.push(0);
   out.push(0);
 
-  for (let i = 0; i < gctColors * 3; i += 1) {
-    out.push(i < palette.length ? palette[i] : 0);
+  if (loop && frames.length > 1) {
+    // Netscape Application Extension — loop forever
+    writeBytes(out, [0x21, 0xff, 0x0b]);
+    writeBytes(out, asciiBytes("NETSCAPE2.0"));
+    writeBytes(out, [0x03, 0x01, 0x00, 0x00, 0x00]);
   }
 
-  writeBytes(out, [0x21, 0xf9, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]);
+  for (const frame of frames) {
+    const rgba = frame.rgba;
+    if (!(rgba instanceof Uint8ClampedArray || rgba instanceof Uint8Array)) {
+      throw new Error("GIF encode expects RGBA bytes");
+    }
+    if (rgba.length < w * h * 4) {
+      throw new Error("Invalid GIF frame size");
+    }
 
-  out.push(0x2c);
-  writeUint16(out, 0);
-  writeUint16(out, 0);
-  writeUint16(out, w);
-  writeUint16(out, h);
-  out.push(0);
+    let delayCs =
+      frame.delayCs != null
+        ? Math.round(Number(frame.delayCs))
+        : Math.round((Number(frame.delaySeconds) || 0) * 100);
+    if (!Number.isFinite(delayCs) || delayCs < 0) delayCs = 0;
+    // Browsers treat 0–1 cs as ~10cs; clamp animated delays to ≥2 (0.02s).
+    if (frames.length > 1 && delayCs < 2) delayCs = 2;
+    if (delayCs > 65535) delayCs = 65535;
 
-  writeBytes(out, lzwEncode(indices, colorDepth));
+    const { palette, indices, colorCount } = quantizeRgbaToGifPalette(
+      rgba,
+      w,
+      h
+    );
+    let lctSize = 0;
+    while (2 ** (lctSize + 1) < colorCount && lctSize < 7) lctSize += 1;
+    const lctColors = 2 ** (lctSize + 1);
+    const colorDepth = lctSize + 1;
+
+    // Graphic Control Extension: disposal 2 (restore to background), no transparent
+    writeBytes(out, [
+      0x21,
+      0xf9,
+      0x04,
+      0x08, // packed: disposal 2
+      delayCs & 255,
+      (delayCs >> 8) & 255,
+      0x00,
+      0x00,
+    ]);
+
+    out.push(0x2c);
+    writeUint16(out, 0);
+    writeUint16(out, 0);
+    writeUint16(out, w);
+    writeUint16(out, h);
+    out.push(0x80 | lctSize); // local color table
+
+    for (let i = 0; i < lctColors * 3; i += 1) {
+      out.push(i < palette.length ? palette[i] : 0);
+    }
+
+    writeBytes(out, lzwEncode(indices, colorDepth));
+  }
+
   out.push(0x3b);
-
   return Uint8Array.from(out);
 }
 
