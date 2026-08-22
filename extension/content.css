@@ -187,6 +187,12 @@
   background: linear-gradient(120deg, #d96a6a, #b84242);
 }
 
+.frameit-btn--cancel {
+  color: #e8eef5;
+  background: rgba(197, 218, 240, 0.18);
+  border: 1px solid rgba(197, 218, 240, 0.28);
+}
+
 .frameit-btn:disabled {
   opacity: 0.65;
   cursor: default;

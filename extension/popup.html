@@ -86,8 +86,8 @@
 
       .tabs {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 4px;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 3px;
         padding: 3px;
         border-radius: 9px;
         background: rgba(197, 218, 240, 0.08);
@@ -96,8 +96,8 @@
 
       .tabs button {
         width: 100%;
-        padding: 6px 8px;
-        font-size: 12px;
+        padding: 6px 4px;
+        font-size: 11px;
         font-weight: 650;
         border-radius: 7px;
         color: var(--muted);
@@ -357,6 +357,46 @@
         accent-color: var(--accent1);
         flex-shrink: 0;
       }
+
+      .range-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .range-row input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent1);
+      }
+
+      .range-value {
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
+        min-width: 3.2em;
+        text-align: right;
+      }
+
+      .number-input {
+        width: 100%;
+        appearance: textfield;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: rgba(197, 218, 240, 0.08);
+        color: var(--text);
+        font: inherit;
+        font-size: 11px;
+        padding: 5px 7px;
+      }
+
+      .source-note {
+        margin: 0;
+        font-size: 10px;
+        line-height: 1.35;
+        color: var(--muted);
+        min-height: 2.4em;
+      }
     </style>
   </head>
   <body>
@@ -402,6 +442,15 @@
           aria-controls="snapshotPanel"
         >
           Snapshot
+        </button>
+        <button
+          id="tabAnimate"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="animatePanel"
+        >
+          Animate
         </button>
       </div>
 
@@ -561,6 +610,52 @@
           </button>
         </div>
 
+        <div
+          id="animatePanel"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tabAnimate"
+        >
+          <p id="animateSource" class="source-note">
+            Record a session first, then create a GIF from it.
+          </p>
+
+          <div class="field">
+            <label class="field__label" for="gifFps">FPS</label>
+            <input
+              id="gifFps"
+              class="number-input"
+              type="number"
+              min="1"
+              max="30"
+              step="1"
+              value="10"
+            />
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="gifSpeed">Speed</label>
+            <div class="range-row">
+              <input
+                id="gifSpeed"
+                type="range"
+                min="10"
+                max="500"
+                step="10"
+                value="100"
+              />
+              <span id="gifSpeedValue" class="range-value">100%</span>
+            </div>
+          </div>
+
+          <label class="option" for="gifSpiralflow">
+            <input id="gifSpiralflow" type="checkbox" />
+            <span>Spiralflow (golden-ratio timing)</span>
+          </label>
+
+          <button id="createGif" type="button">Create GIF</button>
+        </div>
+
         <div id="activeSession" class="panel active-session">
           <div class="active-session__row">
             <span class="active-session__dot" aria-hidden="true"></span>
@@ -570,6 +665,7 @@
             <button id="pause" type="button" class="secondary">Pause</button>
             <button id="stop" type="button" class="danger">Stop &amp; save</button>
           </div>
+          <button id="cancel" type="button" class="secondary">Cancel</button>
         </div>
       </div>
 

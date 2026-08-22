@@ -40,6 +40,10 @@
     <svg class="frameit-icon" viewBox="0 0 24 24" aria-hidden="true">
       <rect x="6" y="6" width="12" height="12" rx="2"></rect>
     </svg>`;
+  const ICON_CANCEL = `
+    <svg class="frameit-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"></path>
+    </svg>`;
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) return;
@@ -298,7 +302,26 @@
     let count = totalSeconds;
 
     return new Promise((resolve) => {
+      let settled = false;
+      const onCountdownKey = (event) => {
+        if (isSnapshot) return;
+        if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+        if (isTypingTarget(event.target)) return;
+        if (String(event.key || "").toLowerCase() !== "escape") return;
+        event.preventDefault();
+        if (settled) return;
+        settled = true;
+        clearTimer();
+        window.removeEventListener("keydown", onCountdownKey, true);
+        overlay.remove();
+        cancelRecording().finally(() => resolve());
+      };
+      window.addEventListener("keydown", onCountdownKey, true);
+
       const finish = async () => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener("keydown", onCountdownKey, true);
         overlay.remove();
         await waitFrames(2);
         await delay(100);
@@ -311,6 +334,7 @@
       };
 
       const tick = () => {
+        if (settled) return;
         count -= 1;
         if (count > 0) {
           numberEl.textContent = String(count);
@@ -592,6 +616,12 @@
           title="Stop and save (S)"
           aria-label="Stop and save"
         >${ICON_STOP}</button>
+        <button
+          type="button"
+          class="frameit-btn frameit-btn--cancel"
+          title="Cancel recording (Esc)"
+          aria-label="Cancel recording"
+        >${ICON_CANCEL}</button>
       </div>
     `;
     root.appendChild(bar);
@@ -599,6 +629,7 @@
     const timeEl = bar.querySelector(".frameit-session-bar__time");
     const pauseBtn = bar.querySelector(".frameit-btn--pause");
     const stopBtn = bar.querySelector(".frameit-btn--stop");
+    const cancelBtn = bar.querySelector(".frameit-btn--cancel");
 
     const updateTime = () => {
       timeEl.textContent = formatElapsed(getElapsedMs());
@@ -606,10 +637,11 @@
     updateTime();
     timerId = window.setInterval(updateTime, 250);
 
-    sessionUi = { bar, pauseBtn, stopBtn, updateTime };
+    sessionUi = { bar, pauseBtn, stopBtn, cancelBtn, updateTime };
 
     pauseBtn.addEventListener("click", () => togglePause());
     stopBtn.addEventListener("click", () => stopAndSave());
+    cancelBtn.addEventListener("click", () => cancelRecording());
   }
 
   function isTypingTarget(target) {
@@ -635,6 +667,9 @@
       } else if (key === "s") {
         event.preventDefault();
         stopAndSave();
+      } else if (key === "escape") {
+        event.preventDefault();
+        cancelRecording();
       }
     };
     window.addEventListener("keydown", onSessionKeyDown, true);
@@ -650,9 +685,10 @@
   async function togglePause() {
     if (sessionBusy) return;
     sessionBusy = true;
-    const { pauseBtn, stopBtn, bar, updateTime } = sessionUi || {};
+    const { pauseBtn, stopBtn, cancelBtn, bar, updateTime } = sessionUi || {};
     if (pauseBtn) pauseBtn.disabled = true;
     if (stopBtn) stopBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
     try {
       if (isPaused) {
         const result = await chrome.runtime.sendMessage({
@@ -698,14 +734,16 @@
       sessionBusy = false;
       if (pauseBtn) pauseBtn.disabled = false;
       if (stopBtn) stopBtn.disabled = false;
+      if (cancelBtn) cancelBtn.disabled = false;
     }
   }
 
   async function stopAndSave() {
     if (sessionBusy) return;
     sessionBusy = true;
-    const { pauseBtn, stopBtn } = sessionUi || {};
+    const { pauseBtn, stopBtn, cancelBtn } = sessionUi || {};
     if (pauseBtn) pauseBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
     if (stopBtn) {
       stopBtn.disabled = true;
       stopBtn.title = "Saving…";
@@ -720,9 +758,39 @@
     } catch (error) {
       sessionBusy = false;
       if (pauseBtn) pauseBtn.disabled = false;
+      if (cancelBtn) cancelBtn.disabled = false;
       if (stopBtn) {
         stopBtn.disabled = false;
         stopBtn.title = "Stop and save (S)";
+      }
+      window.alert(String(error?.message || error));
+    }
+  }
+
+  async function cancelRecording() {
+    if (sessionBusy) return;
+    sessionBusy = true;
+    const { pauseBtn, stopBtn, cancelBtn } = sessionUi || {};
+    if (pauseBtn) pauseBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = true;
+    if (cancelBtn) {
+      cancelBtn.disabled = true;
+      cancelBtn.title = "Cancelling…";
+    }
+    try {
+      const result = await chrome.runtime.sendMessage({
+        type: "frameit-cancel-session",
+      });
+      if (!result?.ok) {
+        throw new Error(result?.error || "Could not cancel the recording.");
+      }
+    } catch (error) {
+      sessionBusy = false;
+      if (pauseBtn) pauseBtn.disabled = false;
+      if (stopBtn) stopBtn.disabled = false;
+      if (cancelBtn) {
+        cancelBtn.disabled = false;
+        cancelBtn.title = "Cancel recording (Esc)";
       }
       window.alert(String(error?.message || error));
     }

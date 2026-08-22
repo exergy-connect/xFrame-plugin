@@ -6,7 +6,7 @@
 
 Creating a video from a browser session shouldn't require a desktop screen share, a heavyweight recording suite, or a professional degree.
 
-Exergy ∞ xFrame records the current browser tab—including video and tab audio—into a shareable MP4 using simple controls. It can also take a quick PNG snapshot of the visible tab. Record. Snapshot. Share.
+Exergy ∞ xFrame records the current browser tab—including video and tab audio—into a shareable MP4 using simple controls. It can also take a quick PNG snapshot of the visible tab, or turn the last recording into an animated GIF. Record. Snapshot. Animate. Share.
 
 Built on standard browser capabilities, xFrame stays small, fast, and easy to understand.
 
@@ -18,7 +18,7 @@ A recording is only one materialization.
 
 The purpose of xFrame is to communicate concepts. Recording a browser session is simply the first realization of **Conceptual Twinning**—capturing intent so it can be shared, explained, and transformed.
 
-Today xFrame produces an MP4—or a PNG snapshot of what you see.
+Today xFrame produces an MP4, a PNG snapshot of what you see, or an animated GIF from a recording.
 
 Tomorrow the same conceptual frame could produce:
 
@@ -39,6 +39,8 @@ It is the first conceptual twin.
 - Video quality presets (Efficient / Standard / High) plus **Optimize for LinkedIn** (~6 Mbps, prefer H.264)
 - Save directly as MP4
 - Take a snapshot of the visible tab (full viewport or a selected region), with optional LinkedIn 1280×644 sizing and PNG/JPG/GIF output
+- Create an animated GIF from the last saved recording (FPS, speed, optional spiralflow timing)
+- Cancel an in-progress recording without saving
 - Customize the recording logo
 - Lightweight implementation using standard browser APIs
 - No desktop recording
@@ -82,14 +84,15 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 | Optimize for LinkedIn | Off | Selects the LinkedIn quality profile (~6 Mbps) and prefers H.264 + AAC for upload-friendly MP4 |
 | Video quality | Standard (~5 Mbps) | Efficient (~2 Mbps), Standard (~5 Mbps), or High (~8 Mbps); locked to LinkedIn when that option is on |
 
-Recording and snapshot settings live on separate popup tabs (**Record** / **Snapshot**) so the popup stays compact. A custom recording logo is stored in extension storage and reused until you reset to the Exergy logo. Audio and quality preferences are remembered between sessions.
+Recording, snapshot, and animate settings live on separate popup tabs (**Record** / **Snapshot** / **Animate**) so the popup stays compact. A custom recording logo is stored in extension storage and reused until you reset to the Exergy logo. Audio, quality, and GIF preferences are remembered between sessions.
 
 ### During a session
 
 - **P** — pause / continue
 - **S** — stop & save
-- Reopen the toolbar popup for the live timer plus Pause and Stop & save
-- If “Hide recording controls” is off, the on-page session bar also offers pause/stop
+- **Esc** — cancel (discard; does not download)
+- Reopen the toolbar popup for the live timer plus Pause, Stop & save, and Cancel
+- If “Hide recording controls” is off, the on-page session bar also offers pause / stop / cancel
 
 Keys are ignored while typing in inputs, textareas, or contenteditable fields.
 
@@ -115,6 +118,25 @@ The file is saved as `{tab title} {YYYY-MM-DD HH_MM}.png` (or `.jpg` / `.gif` by
 | Format | PNG | Output as PNG, JPG (95% quality), or GIF (256-color indexed) |
 
 Preferences are stored in extension storage and reused by the **Alt+Shift+S** shortcut. Remap the shortcut under `chrome://extensions/shortcuts`. Snapshots are blocked while a recording session is active (and the reverse).
+
+## Create an animated GIF
+
+1. Record a session and use **Stop & save** (Cancel does not leave a convertible recording)
+2. Open the toolbar popup → **Animate**
+3. Choose FPS (default 10), speed (10–500%, default 100%), and optional **Spiralflow**
+4. Click **Create GIF** — encoding runs in the background; reopen the popup for progress
+
+The GIF downloads as `{same base name as the recording}.gif`. Create GIF stays disabled until a recording has been saved. Recording and snapshot are blocked while a GIF is encoding (and the reverse).
+
+### Animate options
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| FPS | 10 | Output frame rate (1–30); more frames = larger files |
+| Speed | 100% | Playback rate vs the source (200% finishes in half the time; overall timing scales) |
+| Spiralflow | Off | Inter-frame delays start longer and shorten toward the end (golden-ratio curve: at `1/φ` of the GIF duration the delay is exactly `1/fps`) |
+
+Long or high-FPS clips may be rejected if they would exceed a safe frame budget; lower FPS, raise speed, or use a shorter recording.
 
 ## How a session works
 
@@ -165,6 +187,8 @@ sequenceDiagram
 - LinkedIn snapshot optimization center-crops into 1280×644 after capture (and after an optional region crop). Output format can be PNG, JPG (95%), or GIF (single-frame, ≤256 colors).
 - Prefer native `MediaRecorder` MP4 (`video/mp4`). If MP4 is advertised but fails to start, or is unsupported, the extension falls back to WebM and uses a `.webm` extension.
 - Recordings move offscreen → IndexedDB → `saver.html` → `chrome.downloads` (not Base64 data URLs, and not `createObjectURL` in the service worker). The saver page revokes the temporary `blob:` URL after the download completes.
+- Stop & save also keeps a **last** copy of the blob in IndexedDB (and filename metadata in extension storage) for the Animate tab; Cancel / abort clears only the pending download key.
+- Animated GIFs are encoded on a short-lived `gifMaker.html` page (video decode is not available in the service worker), using the same IndexedDB last blob and a multi-frame GIF89a encoder (local palettes, Netscape loop).
 - No npm runtime dependencies; the extension is plain HTML/CSS/JS.
 
 ## Chrome Web Store package

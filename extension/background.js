@@ -34,9 +34,14 @@ function resolveVideoQuality(value) {
   return VIDEO_QUALITY_PRESETS[key] ? key : DEFAULT_VIDEO_QUALITY;
 }
 
+const LAST_RECORDING_FILENAME_KEY = "lastRecordingFilename";
+const LAST_RECORDING_MIME_KEY = "lastRecordingMime";
+const GIF_JOB_STORAGE_KEY = "frameitGifJob";
+
 const CONTENT_SESSION_TYPES = new Set([
   "frameit-countdown-done",
   "frameit-stop-session",
+  "frameit-cancel-session",
   "frameit-pause-session",
   "frameit-resume-session",
   "frameit-snapshot-countdown-done",
@@ -47,12 +52,17 @@ const CONTENT_SESSION_TYPES = new Set([
 const EXTENSION_PAGE_TYPES = new Set([
   "frameit-start-session",
   "frameit-start-snapshot",
+  "frameit-start-gif",
   "frameit-get-status",
+  "frameit-gif-progress",
+  "frameit-gif-done",
 ]);
 
 let session = null;
 let sessionRestorePromise = null;
 let snapshotState = null;
+/** @type {{ phase: string, progress: number, error?: string, tabId?: number } | null} */
+let gifJob = null;
 
 function isExtensionPageSender(sender) {
   return typeof sender?.url === "string" && sender.url.startsWith(EXTENSION_ORIGIN);
@@ -194,6 +204,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "frameit-cancel-session") {
+    cancelSession()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) =>
+        sendResponse({ ok: false, error: String(error?.message || error) })
+      );
+    return true;
+  }
+
   if (message.type === "frameit-pause-session") {
     pauseSession()
       .then(() => sendResponse({ ok: true }))
@@ -225,6 +244,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "frameit-start-gif") {
+    if (fromContentScript) {
+      sendResponse({ ok: false, error: "Create GIF must come from the extension UI" });
+      return false;
+    }
+    startGifJob({
+      fps: message.fps,
+      speedPercent: message.speedPercent,
+      spiralflow: Boolean(message.spiralflow),
+    })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) =>
+        sendResponse({ ok: false, error: String(error?.message || error) })
+      );
+    return true;
+  }
+
+  if (message.type === "frameit-gif-progress") {
+    if (!isExtensionPageSender(sender)) {
+      sendResponse({ ok: false, error: "Unauthorized" });
+      return false;
+    }
+    if (gifJob) {
+      gifJob.progress = Math.max(0, Math.min(1, Number(message.progress) || 0));
+      if (message.phase) gifJob.phase = String(message.phase);
+      persistGifJob().catch(() => {});
+    }
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (message.type === "frameit-gif-done") {
+    if (!isExtensionPageSender(sender)) {
+      sendResponse({ ok: false, error: "Unauthorized" });
+      return false;
+    }
+    onGifDone(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: true }));
+    return true;
+  }
+
   return false;
 });
 
@@ -239,6 +300,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
   if (snapshotState?.tabId === tabId) {
     abortSnapshot(new Error("Tab closed")).catch(() => {});
+  }
+  if (gifJob?.tabId === tabId && gifJob.phase !== "done" && gifJob.phase !== "error") {
+    gifJob = {
+      phase: "error",
+      progress: gifJob.progress || 0,
+      error: "GIF tab was closed",
+      tabId: null,
+    };
+    persistGifJob().catch(() => {});
   }
 });
 
@@ -324,8 +394,12 @@ function assertCapturableTab(tab) {
 
 async function startSnapshot({ mode, delay, linkedIn, format } = {}) {
   await ensureSessionRestored();
+  await ensureGifJobRestored();
   if (session) {
     throw new Error("Finish or stop the recording before taking a snapshot");
+  }
+  if (gifJob && gifJob.phase !== "done" && gifJob.phase !== "error") {
+    throw new Error("Wait for GIF creation to finish");
   }
   if (snapshotState) {
     throw new Error("A snapshot is already in progress");
@@ -627,8 +701,12 @@ async function startSession({
   videoQuality = DEFAULT_VIDEO_QUALITY,
 } = {}) {
   await ensureSessionRestored();
+  await ensureGifJobRestored();
   if (snapshotState) {
     throw new Error("Finish the snapshot before starting a recording");
+  }
+  if (gifJob && gifJob.phase !== "done" && gifJob.phase !== "error") {
+    throw new Error("Wait for GIF creation to finish");
   }
   if (session) {
     throw new Error("A session is already in progress");
@@ -792,6 +870,15 @@ async function stopSession() {
     await downloadPendingRecording(finalName);
 
     try {
+      await chrome.storage.local.set({
+        [LAST_RECORDING_FILENAME_KEY]: finalName,
+        [LAST_RECORDING_MIME_KEY]: finalMime,
+      });
+    } catch (_error) {
+      // Metadata is optional for Animate; blob is already in IndexedDB.
+    }
+
+    try {
       await chrome.tabs.sendMessage(tabId, { type: "frameit-teardown" });
     } catch (_error) {
       // Tab may have closed.
@@ -808,12 +895,37 @@ async function stopSession() {
   }
 }
 
+async function cancelSession() {
+  await ensureSessionRestored();
+  if (!session) {
+    throw new Error("No active session");
+  }
+  await abortSession();
+}
+
 async function getStatus() {
   await ensureSessionRestored();
+  await ensureGifJobRestored();
   if (session?.phase === "recording") {
     await ensureSessionOverlay().catch(() => {});
   }
-  return {
+  let hasLast = false;
+  let lastFilename = null;
+  try {
+    hasLast = await hasLastRecording();
+  } catch (_error) {
+    hasLast = false;
+  }
+  try {
+    const stored = await chrome.storage.local.get([
+      LAST_RECORDING_FILENAME_KEY,
+    ]);
+    const name = stored?.[LAST_RECORDING_FILENAME_KEY];
+    lastFilename = typeof name === "string" && name ? name : null;
+  } catch (_error) {
+    lastFilename = null;
+  }
+  const status = {
     ok: true,
     active: Boolean(session),
     phase: session?.phase || null,
@@ -824,7 +936,23 @@ async function getStatus() {
     hideControls: session?.hideControls !== false,
     snapshotActive: Boolean(snapshotState),
     snapshotPhase: snapshotState?.phase || null,
+    hasLastRecording: hasLast,
+    lastRecordingFilename: lastFilename,
+    gifActive: Boolean(
+      gifJob && gifJob.phase !== "done" && gifJob.phase !== "error"
+    ),
+    gifPhase: gifJob?.phase || null,
+    gifProgress: gifJob?.progress ?? 0,
+    gifError: gifJob?.error || null,
   };
+
+  // One-shot terminal GIF status for the popup.
+  if (gifJob && (gifJob.phase === "done" || gifJob.phase === "error")) {
+    gifJob = null;
+    persistGifJob().catch(() => {});
+  }
+
+  return status;
 }
 
 async function downloadPendingRecording(filename) {
@@ -897,6 +1025,123 @@ async function abortSession() {
   }
 
   await closeOffscreenDocument();
+}
+
+async function persistGifJob() {
+  if (!gifJob) {
+    await chrome.storage.session.remove(GIF_JOB_STORAGE_KEY);
+    return;
+  }
+  await chrome.storage.session.set({
+    [GIF_JOB_STORAGE_KEY]: {
+      phase: gifJob.phase,
+      progress: gifJob.progress,
+      error: gifJob.error || null,
+      tabId: gifJob.tabId ?? null,
+    },
+  });
+}
+
+async function ensureGifJobRestored() {
+  if (gifJob) return;
+  try {
+    const stored = await chrome.storage.session.get(GIF_JOB_STORAGE_KEY);
+    const raw = stored?.[GIF_JOB_STORAGE_KEY];
+    if (raw && typeof raw === "object" && raw.phase) {
+      gifJob = {
+        phase: String(raw.phase),
+        progress: Number(raw.progress) || 0,
+        error: raw.error ? String(raw.error) : null,
+        tabId: raw.tabId != null ? Number(raw.tabId) : null,
+      };
+    }
+  } catch (_error) {
+    // session storage may be unavailable
+  }
+}
+
+async function startGifJob({ fps, speedPercent, spiralflow } = {}) {
+  await ensureSessionRestored();
+  await ensureGifJobRestored();
+
+  if (session) {
+    throw new Error("Finish or cancel the recording session first");
+  }
+  if (snapshotState) {
+    throw new Error("Wait for the snapshot to finish");
+  }
+  if (gifJob && gifJob.phase !== "done" && gifJob.phase !== "error") {
+    throw new Error("A GIF is already being created");
+  }
+
+  const hasLast = await hasLastRecording();
+  if (!hasLast) {
+    throw new Error("Record a session first, then create a GIF");
+  }
+
+  const fpsN = Math.max(1, Math.min(30, Math.round(Number(fps) || 10)));
+  const speedN = Math.max(10, Math.min(500, Math.round(Number(speedPercent) || 100)));
+
+  let filename = "session.gif";
+  try {
+    const stored = await chrome.storage.local.get([LAST_RECORDING_FILENAME_KEY]);
+    const base = stored?.[LAST_RECORDING_FILENAME_KEY];
+    if (typeof base === "string" && base) {
+      filename = base.replace(/\.(mp4|webm)$/i, "") + ".gif";
+    }
+  } catch (_error) {
+    // keep default
+  }
+
+  gifJob = { phase: "starting", progress: 0, error: null, tabId: null };
+  await persistGifJob();
+
+  const params = new URLSearchParams({
+    fps: String(fpsN),
+    speed: String(speedN),
+    spiralflow: spiralflow ? "1" : "0",
+    filename,
+  });
+  const makerUrl = `${chrome.runtime.getURL("gifMaker.html")}?${params.toString()}`;
+
+  try {
+    const tab = await chrome.tabs.create({ url: makerUrl, active: false });
+    gifJob.tabId = tab.id;
+    gifJob.phase = "encoding";
+    await persistGifJob();
+  } catch (error) {
+    gifJob = {
+      phase: "error",
+      progress: 0,
+      error: String(error?.message || error),
+      tabId: null,
+    };
+    await persistGifJob();
+    throw error;
+  }
+}
+
+async function onGifDone(message) {
+  await ensureGifJobRestored();
+  const tabId = gifJob?.tabId;
+  if (message?.ok) {
+    gifJob = { phase: "done", progress: 1, error: null, tabId: null };
+  } else {
+    gifJob = {
+      phase: "error",
+      progress: gifJob?.progress || 0,
+      error: String(message?.error || "GIF creation failed"),
+      tabId: null,
+    };
+  }
+  await persistGifJob();
+  if (tabId != null) {
+    try {
+      await chrome.tabs.remove(tabId);
+    } catch (_error) {
+      // already closed
+    }
+  }
 }
 
 async function injectOverlay(tabId) {

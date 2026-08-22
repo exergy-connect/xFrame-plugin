@@ -2,6 +2,7 @@ const FRAMEIT_DB_NAME = "exergy-frame";
 const FRAMEIT_DB_VERSION = 1;
 const FRAMEIT_STORE = "recordings";
 const FRAMEIT_PENDING_KEY = "pending";
+const FRAMEIT_LAST_KEY = "last";
 
 function openRecordingDb() {
   return new Promise((resolve, reject) => {
@@ -36,11 +37,14 @@ function waitForTransaction(tx) {
   });
 }
 
+/** Store blob for download (pending) and keep a copy for Animate (last). */
 async function putPendingRecording(blob) {
   const db = await openRecordingDb();
   try {
     const tx = db.transaction(FRAMEIT_STORE, "readwrite");
-    tx.objectStore(FRAMEIT_STORE).put(blob, FRAMEIT_PENDING_KEY);
+    const store = tx.objectStore(FRAMEIT_STORE);
+    store.put(blob, FRAMEIT_PENDING_KEY);
+    store.put(blob, FRAMEIT_LAST_KEY);
     await waitForTransaction(tx);
   } finally {
     db.close();
@@ -70,4 +74,23 @@ async function clearPendingRecording() {
   } finally {
     db.close();
   }
+}
+
+/** Read-only copy of the last saved recording (not consumed by saver). */
+async function getLastRecording() {
+  const db = await openRecordingDb();
+  try {
+    const tx = db.transaction(FRAMEIT_STORE, "readonly");
+    // Do not await tx completion after get: the readonly transaction may
+    // already have fired oncomplete, which would hang waitForTransaction.
+    const blob = await idbRequest(tx.objectStore(FRAMEIT_STORE).get(FRAMEIT_LAST_KEY));
+    return blob || null;
+  } finally {
+    db.close();
+  }
+}
+
+async function hasLastRecording() {
+  const blob = await getLastRecording();
+  return Boolean(blob && blob.size > 0);
 }
