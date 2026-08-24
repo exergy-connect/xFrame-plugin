@@ -30,15 +30,34 @@ jobs:
           ASSET_NAME="exergy∞xframe-chrome-plugin-${VERSION}.zip"
           mkdir -p dist
 
+          # Stage a CWS package without FFmpeg WASM / transcoding fallback.
+          STAGE="$(mktemp -d)"
+          trap 'rm -rf "${STAGE}"' EXIT
+          cp -a extension/. "${STAGE}/"
+          rm -rf "${STAGE}/ffmpeg"
+          printf '%s\n' \
+            '/** Packaged builds disable FFmpeg WebM→MP4 transcoding. */' \
+            'const FRAMEIT_FFMPEG_TRANSCODING = false;' \
+            > "${STAGE}/ffmpegConfig.js"
+
           # Chrome Web Store expects manifest.json at the zip root.
           (
-            cd extension
-            zip -r -q "../dist/${ASSET_NAME}" . \
+            cd "${STAGE}"
+            zip -r -q "${GITHUB_WORKSPACE}/dist/${ASSET_NAME}" . \
               -x "*.DS_Store" \
               -x "**/.DS_Store" \
               -x "*~" \
               -x "*/.git/*"
           )
+
+          if unzip -l "dist/${ASSET_NAME}" | grep -E 'ffmpeg/|ffmpeg-to_mp4'; then
+            echo "Error: packaged zip must not include FFmpeg transcoding assets" >&2
+            exit 1
+          fi
+          if ! unzip -p "dist/${ASSET_NAME}" ffmpegConfig.js | grep -q 'FRAMEIT_FFMPEG_TRANSCODING = false'; then
+            echo "Error: packaged zip must disable FFmpeg transcoding" >&2
+            exit 1
+          fi
 
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "asset_path=dist/${ASSET_NAME}" >> "${GITHUB_OUTPUT}"

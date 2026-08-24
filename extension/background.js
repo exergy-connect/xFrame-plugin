@@ -24,8 +24,9 @@ const VIDEO_QUALITY_PRESETS = {
   efficient: { videoBitsPerSecond: 2_000_000, audioBitsPerSecond: 128_000 },
   standard: { videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 192_000 },
   high: { videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 },
-  // LinkedIn feed: ~5–8 Mbps @ 1080p30, prefer H.264 + AAC at encode time.
-  linkedin: { videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 192_000 },
+  // LinkedIn: capture at high quality; native H.264/AAC when available,
+  // otherwise WebM is transcoded to MP4 (local/unpacked builds only).
+  linkedin: { videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 },
 };
 const DEFAULT_VIDEO_QUALITY = "standard";
 
@@ -76,6 +77,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
 
   const fromContentScript = isTabContentScript(sender);
+
+  // Offscreen/extension pages may forward debug logs to the recorded tab.
+  if (message.type === "frameit-debug-log" && !fromContentScript) {
+    forwardDebugLogToSessionTab(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (message.type === "frameit-transcode-progress" && !fromContentScript) {
+    forwardTranscodeProgressToSessionTab(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
 
   // Content scripts may only drive overlay/session UI events.
   if (fromContentScript && !CONTENT_SESSION_TYPES.has(message.type)) {
@@ -850,6 +866,14 @@ async function stopSession() {
   await persistSession();
 
   try {
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: "frameit-session-stopping",
+      });
+    } catch (_error) {
+      // Overlay may already be gone.
+    }
+
     const stopped = await sendToOffscreen({
       type: "frameit-stop-recording",
       filename,
@@ -1149,6 +1173,37 @@ async function injectOverlay(tabId) {
     target: { tabId },
     files: ["content.js"],
   });
+}
+
+async function forwardDebugLogToSessionTab(message) {
+  await ensureSessionRestored();
+  const tabId = session?.tabId;
+  if (tabId == null) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: "frameit-console-log",
+      level: message.level || "error",
+      label: message.label || "[frameit]",
+      detail: message.detail ?? null,
+    });
+  } catch (_error) {
+    // Tab may have closed or content script may not be ready.
+  }
+}
+
+async function forwardTranscodeProgressToSessionTab(message) {
+  await ensureSessionRestored();
+  const tabId = session?.tabId;
+  if (tabId == null) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: "frameit-transcode-progress",
+      progress: message.progress,
+      label: message.label || "Converting to MP4…",
+    });
+  } catch (_error) {
+    // Tab may have closed or content script may not be ready.
+  }
 }
 
 async function ensureSessionOverlay() {

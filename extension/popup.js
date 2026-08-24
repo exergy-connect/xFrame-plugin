@@ -288,6 +288,7 @@ stopBtn.addEventListener("click", async () => {
   pauseBtn.disabled = true;
   stopBtn.disabled = true;
   cancelBtn.disabled = true;
+  clearTimer();
   setStatus("Saving…");
   try {
     const result = await chrome.runtime.sendMessage({
@@ -296,7 +297,6 @@ stopBtn.addEventListener("click", async () => {
     if (!result?.ok) {
       throw new Error(result?.error || "Could not save the recording.");
     }
-    clearTimer();
     statusSnapshot = null;
     hasLastRecording = true;
     showIdle();
@@ -745,13 +745,24 @@ function showActive(status) {
   const canCancel =
     status.phase === "recording" ||
     status.phase === "countdown" ||
-    status.phase === "acquiring";
+    status.phase === "acquiring" ||
+    status.phase === "stopping";
   pauseBtn.disabled = !canControl;
   stopBtn.disabled = !canControl;
   cancelBtn.disabled = !canCancel;
   pauseBtn.textContent = status.paused ? "Continue" : "Pause";
 
-  if (status.recordingStartedAt) {
+  if (status.phase === "stopping") {
+    clearTimer();
+    if (status.recordingStartedAt) {
+      updateActiveTime({
+        ...status,
+        paused: true,
+        pausedAt: status.pausedAt || Date.now(),
+      });
+    }
+    setStatus("Converting to MP4…");
+  } else if (status.recordingStartedAt) {
     updateActiveTime(status);
     clearTimer();
     timerId = window.setInterval(

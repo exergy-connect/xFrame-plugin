@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Recording filenames include the detected video codec before the container extension (for example, `.vp8.webm`, `.vp9.mp4`, or `.h264.mp4`).
+- Local/unpacked builds convert LinkedIn WebM recordings to H.264/AAC MP4 in the extension using FFmpeg WASM, with conversion progress shown in the session overlay.
+
+### Fixed
+
+- **Optimize for LinkedIn** no longer falls back to WebM; it saves MP4 or reports that MP4 recording is unavailable.
+- Tab recording starts correctly when FFmpeg transcoding is enabled; extension-wide cross-origin isolation no longer prevents the offscreen recorder from consuming the tab stream.
+- FFmpeg WebM-to-MP4 conversion avoids pthread deadlocks and VP9 decoder `Resource temporarily unavailable` failures by preloading a larger worker pool and constraining decoder threads.
+
 ## [1.1.0] - 2026-08-22
 
 ### Added

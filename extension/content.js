@@ -19,6 +19,8 @@
   let onPointerMove = null;
   let onSessionKeyDown = null;
   let sessionBusy = false;
+  let sessionStopping = false;
+  let frozenElapsedMs = null;
   let sessionUi = null; // { bar, pauseBtn, stopBtn, updateTime } when on-page bar exists
   let sessionActive = false;
   let sessionOptions = null;
@@ -118,6 +120,40 @@
 
     if (message.type === "frameit-teardown") {
       teardown();
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message.type === "frameit-session-stopping") {
+      beginStoppingUi();
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message.type === "frameit-transcode-progress") {
+      updateTranscodeProgress(
+        Number(message.progress) || 0,
+        message.label || "Converting to MP4…"
+      );
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message.type === "frameit-console-log") {
+      const level =
+        message.level === "warn" ||
+        message.level === "log" ||
+        message.level === "info" ||
+        message.level === "error"
+          ? message.level
+          : "error";
+      const label = message.label || "[frameit]";
+      const detail = message.detail;
+      if (detail === undefined || detail === null) {
+        console[level](label);
+      } else {
+        console[level](label, detail);
+      }
       sendResponse({ ok: true });
       return false;
     }
@@ -236,11 +272,11 @@
   }
 
   function scheduleRemount() {
-    if (!sessionActive || remountScheduled) return;
+    if (!sessionActive || sessionStopping || remountScheduled) return;
     remountScheduled = true;
     queueMicrotask(async () => {
       remountScheduled = false;
-      if (!sessionActive || hostEl?.isConnected) return;
+      if (!sessionActive || sessionStopping || hostEl?.isConnected) return;
       try {
         await showSessionBar(sessionOptions || {});
       } catch (_error) {
@@ -562,6 +598,8 @@
     unbindSessionKeys();
     clearTimer();
     sessionBusy = false;
+    sessionStopping = false;
+    frozenElapsedMs = null;
     sessionUi = null;
 
     if (includeLogo) {
@@ -632,12 +670,15 @@
     const cancelBtn = bar.querySelector(".frameit-btn--cancel");
 
     const updateTime = () => {
+      if (sessionStopping) return;
       timeEl.textContent = formatElapsed(getElapsedMs());
     };
     updateTime();
-    timerId = window.setInterval(updateTime, 250);
+    if (!sessionStopping) {
+      timerId = window.setInterval(updateTime, 250);
+    }
 
-    sessionUi = { bar, pauseBtn, stopBtn, cancelBtn, updateTime };
+    sessionUi = { bar, pauseBtn, stopBtn, cancelBtn, updateTime, timeEl };
 
     pauseBtn.addEventListener("click", () => togglePause());
     stopBtn.addEventListener("click", () => stopAndSave());
@@ -741,13 +782,7 @@
   async function stopAndSave() {
     if (sessionBusy) return;
     sessionBusy = true;
-    const { pauseBtn, stopBtn, cancelBtn } = sessionUi || {};
-    if (pauseBtn) pauseBtn.disabled = true;
-    if (cancelBtn) cancelBtn.disabled = true;
-    if (stopBtn) {
-      stopBtn.disabled = true;
-      stopBtn.title = "Saving…";
-    }
+    beginStoppingUi();
     try {
       const result = await chrome.runtime.sendMessage({
         type: "frameit-stop-session",
@@ -757,14 +792,96 @@
       }
     } catch (error) {
       sessionBusy = false;
+      sessionStopping = false;
+      frozenElapsedMs = null;
+      hideTranscodeProgress();
+      const { pauseBtn, stopBtn, cancelBtn } = sessionUi || {};
       if (pauseBtn) pauseBtn.disabled = false;
       if (cancelBtn) cancelBtn.disabled = false;
       if (stopBtn) {
         stopBtn.disabled = false;
         stopBtn.title = "Stop and save (S)";
       }
+      if (sessionUi?.bar) sessionUi.bar.style.display = "";
+      // Restart timer only if the session bar is still visible after a failed stop.
+      if (sessionUi?.updateTime && sessionActive && timerId == null) {
+        timerId = window.setInterval(sessionUi.updateTime, 250);
+      }
       window.alert(String(error?.message || error));
     }
+  }
+
+  function beginStoppingUi() {
+    sessionStopping = true;
+    if (frozenElapsedMs == null) {
+      frozenElapsedMs = getElapsedMs();
+    }
+    clearTimer();
+    unbindSessionKeys();
+    const frozenTime = formatElapsed(frozenElapsedMs);
+    const { pauseBtn, stopBtn, cancelBtn, bar, timeEl } = sessionUi || {};
+    if (pauseBtn) pauseBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (stopBtn) {
+      stopBtn.disabled = true;
+      stopBtn.title = "Saving…";
+    }
+    if (timeEl) timeEl.textContent = frozenTime;
+    if (bar) {
+      bar.classList.add("frameit-session-bar--stopping");
+    }
+    showTranscodeProgress(frozenTime, 0, "Saving…");
+  }
+
+  async function showTranscodeProgress(frozenTime, progress = 0, label = "Saving…") {
+    const root = await ensureRoot();
+    if (sessionUi?.bar) {
+      sessionUi.bar.style.display = "none";
+    }
+    let panel = root.querySelector(".frameit-transcode");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.className = "frameit-transcode";
+      panel.innerHTML = `
+        <div class="frameit-transcode__card" role="status" aria-live="polite">
+          <div class="frameit-transcode__label"></div>
+          <div class="frameit-transcode__time"></div>
+          <progress class="frameit-transcode__bar" max="100" value="0"></progress>
+          <div class="frameit-transcode__pct">0%</div>
+        </div>
+      `;
+      root.appendChild(panel);
+    }
+    const timeEl = panel.querySelector(".frameit-transcode__time");
+    if (timeEl && frozenTime) timeEl.textContent = frozenTime;
+    updateTranscodeProgress(progress, label);
+  }
+
+  function updateTranscodeProgress(progress, label) {
+    const root = shadowRoot;
+    const panel = root?.querySelector?.(".frameit-transcode");
+    if (!panel) {
+      showTranscodeProgress(
+        formatElapsed(getElapsedMs()),
+        progress,
+        label || "Converting to MP4…"
+      );
+      return;
+    }
+    const clamped = Math.max(0, Math.min(1, Number(progress) || 0));
+    const pct = Math.round(clamped * 100);
+    const labelEl = panel.querySelector(".frameit-transcode__label");
+    const barEl = panel.querySelector(".frameit-transcode__bar");
+    const pctEl = panel.querySelector(".frameit-transcode__pct");
+    if (labelEl) labelEl.textContent = label || "Converting to MP4…";
+    if (barEl) barEl.value = pct;
+    if (pctEl) pctEl.textContent = `${pct}%`;
+  }
+
+  function hideTranscodeProgress() {
+    const panel = shadowRoot?.querySelector?.(".frameit-transcode");
+    if (panel) panel.remove();
+    sessionUi?.bar?.classList.remove("frameit-session-bar--stopping");
   }
 
   async function cancelRecording() {
@@ -850,6 +967,9 @@
   }
 
   function getElapsedMs() {
+    if (sessionStopping && frozenElapsedMs != null) {
+      return frozenElapsedMs;
+    }
     const pausedExtra = isPaused && pausedAt ? Date.now() - pausedAt : 0;
     return Math.max(
       0,
@@ -862,12 +982,15 @@
     snapshotActive = false;
     sessionOptions = null;
     remountScheduled = false;
+    sessionStopping = false;
+    frozenElapsedMs = null;
     clearTimer();
     stopPointer();
     unbindSessionKeys();
     clearRegionSelect();
     hideNativeCursor(false);
     stopDomGuard();
+    hideTranscodeProgress();
     sessionUi = null;
     sessionBusy = false;
     if (hostEl) {
