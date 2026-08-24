@@ -861,6 +861,19 @@ async function stopSession() {
   const { tabId, tabTitle, sessionStartedAt, mimeType } = session;
   const extension = (mimeType || "").includes("mp4") ? ".mp4" : ".webm";
   const filename = buildFilename(tabTitle, sessionStartedAt, extension);
+  const stoppedAt = Date.now();
+  const currentPauseMs =
+    session.paused && session.pausedAt ? stoppedAt - session.pausedAt : 0;
+  const recordingDurationSec = session.recordingStartedAt
+    ? Math.max(
+        0.001,
+        (stoppedAt -
+          session.recordingStartedAt -
+          (session.totalPausedMs || 0) -
+          currentPauseMs) /
+          1000
+      )
+    : null;
 
   session.phase = "stopping";
   await persistSession();
@@ -877,6 +890,7 @@ async function stopSession() {
     const stopped = await sendToOffscreen({
       type: "frameit-stop-recording",
       filename,
+      durationSec: recordingDurationSec,
     });
     if (!stopped?.ok) {
       throw new Error(stopped?.error || "Failed to stop recording");

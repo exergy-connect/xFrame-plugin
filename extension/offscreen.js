@@ -109,7 +109,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "frameit-stop-recording") {
-    stopRecording(message.filename)
+    stopRecording(message.filename, message.durationSec)
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) =>
         sendResponse({ ok: false, error: String(error?.message || error) })
@@ -199,14 +199,24 @@ async function acquireStream(
   if (includeAudio) {
     try {
       captureStream = await openStream(true);
-    } catch (_audioError) {
-      captureStream = await openStream(false);
+    } catch (error) {
+      cleanup();
+      throw new Error(
+        `Could not capture tab audio: ${String(error?.message || error)}. ` +
+          "Disable Include audio to record video only."
+      );
     }
   } else {
     captureStream = await openStream(false);
   }
 
   const audioTracks = captureStream.getAudioTracks();
+  if (includeAudio && audioTracks.length === 0) {
+    cleanup();
+    throw new Error(
+      "Chrome returned a tab stream without audio. Disable Include audio to record video only."
+    );
+  }
   if (includeAudio && audioTracks.length > 0) {
     audioContext = new AudioContext();
     const source = audioContext.createMediaStreamSource(captureStream);
@@ -325,7 +335,7 @@ function reportTranscodeDebug(message, detail) {
   }
 }
 
-function transcodeWebmToMp4(blob) {
+function transcodeWebmToMp4(blob, durationSec) {
   return new Promise(async (resolve, reject) => {
     let worker;
     let settled = false;
@@ -396,9 +406,14 @@ function transcodeWebmToMp4(blob) {
           new Error(event?.message || "FFmpeg worker failed to start")
         );
       };
-      worker.postMessage({ type: "transcode", buffer: inputBuffer }, [
-        inputBuffer,
-      ]);
+      worker.postMessage(
+        {
+          type: "transcode",
+          buffer: inputBuffer,
+          durationSec: Number(durationSec) || null,
+        },
+        [inputBuffer]
+      );
       reportTranscodeDebug("transcode message posted to worker");
     } catch (error) {
       reportTranscodeDebug("failed before worker run", {
@@ -494,7 +509,7 @@ function resumeRecording() {
   mediaRecorder.resume();
 }
 
-async function stopRecording(filename) {
+async function stopRecording(filename, durationSec) {
   if (!mediaRecorder || mediaRecorder.state === "inactive") {
     throw new Error("Recorder is not active");
   }
@@ -533,7 +548,7 @@ async function stopRecording(filename) {
   if (needsLinkedInTranscode(mimeType)) {
     reportTranscodeProgress(0.01, "Converting to MP4…");
     try {
-      blob = await transcodeWebmToMp4(blob);
+      blob = await transcodeWebmToMp4(blob, durationSec);
       finalMime = "video/mp4";
       videoCodec = "h264";
       finalFilename = replaceFilenameExtension(filename, ".mp4");

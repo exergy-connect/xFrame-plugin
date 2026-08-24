@@ -161,15 +161,19 @@ function parseClock(value) {
   return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
 }
 
-function createProgressTracker(post) {
-  let durationSec = null;
+function createProgressTracker(post, expectedDurationSec) {
+  let durationSec =
+    Number.isFinite(Number(expectedDurationSec)) && Number(expectedDurationSec) > 0
+      ? Number(expectedDurationSec)
+      : null;
   let lastEmit = 0;
   return (line) => {
     if (durationSec == null) {
       const durationMatch = /Duration:\s*(\d+:\d+:\d+(?:\.\d+)?)/.exec(line);
       if (durationMatch) durationSec = parseClock(durationMatch[1]);
     }
-    const timeMatch = /(?:^|\s)time=(\d+:\d+:\d+(?:\.\d+)?)/.exec(line);
+    const timeMatch =
+      /(?:^|\s)(?:out_time|time)=(\d+:\d+:\d+(?:\.\d+)?)/.exec(line);
     if (!timeMatch || !(durationSec > 0)) return;
     const current = parseClock(timeMatch[1]);
     if (current == null) return;
@@ -206,7 +210,7 @@ function runMain(core, args) {
   return { exitCode, logs: consumeLogs(core) };
 }
 
-async function transcode(inputBuffer) {
+async function transcode(inputBuffer, durationSec) {
   const inputName = "input.webm";
   const outputName = "output.mp4";
   const inputData = new Uint8Array(inputBuffer);
@@ -215,6 +219,11 @@ async function transcode(inputBuffer) {
   const attempts = [
     [
       "-y",
+      "-nostats",
+      "-stats_period",
+      "0.25",
+      "-progress",
+      "/dev/stderr",
       "-threads:v",
       "1",
       "-i",
@@ -241,6 +250,11 @@ async function transcode(inputBuffer) {
     ],
     [
       "-y",
+      "-nostats",
+      "-stats_period",
+      "0.25",
+      "-progress",
+      "/dev/stderr",
       "-threads:v",
       "1",
       "-i",
@@ -269,7 +283,10 @@ async function transcode(inputBuffer) {
   for (let i = 0; i < attempts.length; i += 1) {
     debug("transcode: attempt", { index: i, args: attempts[i] });
     corePromise = null;
-    const onLog = createProgressTracker((msg) => self.postMessage(msg));
+    const onLog = createProgressTracker(
+      (msg) => self.postMessage(msg),
+      durationSec
+    );
     self.postMessage({
       type: "progress",
       progress: 0.08,
@@ -368,7 +385,7 @@ self.onmessage = async (event) => {
       progress: 0.02,
       label: "Preparing conversion…",
     });
-    await transcode(data.buffer);
+    await transcode(data.buffer, data.durationSec);
   } catch (error) {
     debug("worker: transcode failed", {
       error: String(error?.message || error),
