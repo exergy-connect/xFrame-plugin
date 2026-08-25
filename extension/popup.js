@@ -1,6 +1,7 @@
 const DEFAULT_LOGO_URL = "assets/exergy_connect_logo.png";
 const LOGO_STORAGE_KEY = "customLogoDataUrl";
 const INCLUDE_AUDIO_KEY = "includeAudio";
+const INCLUDE_MICROPHONE_KEY = "includeMicrophone";
 const VIDEO_QUALITY_KEY = "videoQuality";
 const VIDEO_LINKEDIN_KEY = "videoLinkedIn";
 const SNAPSHOT_MODE_KEY = "snapshotMode";
@@ -40,6 +41,7 @@ const logoFileEl = document.getElementById("logoFile");
 const hideControlsEl = document.getElementById("hideControls");
 const includePointerEl = document.getElementById("includePointer");
 const includeAudioEl = document.getElementById("includeAudio");
+const includeMicrophoneEl = document.getElementById("includeMicrophone");
 const videoLinkedInEl = document.getElementById("videoLinkedIn");
 const videoQualityEl = document.getElementById("videoQuality");
 const videoQualityLinkedInOption = videoQualityEl.querySelector(
@@ -96,6 +98,7 @@ includeLogoEl.addEventListener("change", () => {
   lockPanelsHeight();
 });
 includeAudioEl.addEventListener("change", persistRecordingSettings);
+includeMicrophoneEl.addEventListener("change", persistRecordingSettings);
 videoLinkedInEl.addEventListener("change", () => {
   syncVideoLinkedInUi();
   persistRecordingSettings();
@@ -168,6 +171,11 @@ startBtn.addEventListener("click", async () => {
   setStatus("Starting session…");
 
   try {
+    if (includeMicrophoneEl.checked) {
+      setStatus("Requesting microphone access…");
+      await requestMicrophoneAccess();
+      setStatus("Starting session…");
+    }
     await persistRecordingSettings();
     const result = await chrome.runtime.sendMessage({
       type: "frameit-start-session",
@@ -176,6 +184,7 @@ startBtn.addEventListener("click", async () => {
       hideControls: hideControlsEl.checked,
       includePointer: includePointerEl.checked,
       includeAudio: includeAudioEl.checked,
+      includeMicrophone: includeMicrophoneEl.checked,
       videoQuality: selectedVideoQuality(),
     });
     if (!result?.ok) {
@@ -190,6 +199,22 @@ startBtn.addEventListener("click", async () => {
     syncCreateGifEnabled();
   }
 });
+
+async function requestMicrophoneAccess() {
+  try {
+    const permission = await navigator.permissions.query({ name: "microphone" });
+    if (permission.state === "granted") {
+      return;
+    }
+  } catch (_error) {
+    // If the Permissions API cannot report microphone state, use the setup page.
+  }
+
+  await chrome.tabs.create({ url: chrome.runtime.getURL("microphone.html") });
+  throw new Error(
+    "Finish microphone setup in the tab that just opened, then start the session again."
+  );
+}
 
 snapshotBtn.addEventListener("click", async () => {
   snapshotBtn.disabled = true;
@@ -352,10 +377,12 @@ async function initRecordingSettings() {
   try {
     const stored = await chrome.storage.local.get([
       INCLUDE_AUDIO_KEY,
+      INCLUDE_MICROPHONE_KEY,
       VIDEO_QUALITY_KEY,
       VIDEO_LINKEDIN_KEY,
     ]);
     includeAudioEl.checked = stored?.[INCLUDE_AUDIO_KEY] !== false;
+    includeMicrophoneEl.checked = stored?.[INCLUDE_MICROPHONE_KEY] === true;
     const storedQuality = normalizeVideoQuality(stored?.[VIDEO_QUALITY_KEY]);
     const linkedIn =
       stored?.[VIDEO_LINKEDIN_KEY] === true || storedQuality === "linkedin";
@@ -365,6 +392,7 @@ async function initRecordingSettings() {
     syncVideoLinkedInUi();
   } catch (_error) {
     includeAudioEl.checked = true;
+    includeMicrophoneEl.checked = false;
     videoLinkedInEl.checked = false;
     lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
     syncVideoLinkedInUi();
@@ -374,6 +402,7 @@ async function initRecordingSettings() {
 async function persistRecordingSettings() {
   await chrome.storage.local.set({
     [INCLUDE_AUDIO_KEY]: includeAudioEl.checked,
+    [INCLUDE_MICROPHONE_KEY]: includeMicrophoneEl.checked,
     [VIDEO_LINKEDIN_KEY]: videoLinkedInEl.checked,
     [VIDEO_QUALITY_KEY]: selectedVideoQuality(),
   });
@@ -780,6 +809,7 @@ function setOptionsDisabled(disabled) {
   hideControlsEl.disabled = disabled;
   includePointerEl.disabled = disabled;
   includeAudioEl.disabled = disabled;
+  includeMicrophoneEl.disabled = disabled;
   videoLinkedInEl.disabled = disabled;
   chooseLogoBtn.disabled = disabled;
   resetLogoBtn.disabled = disabled;

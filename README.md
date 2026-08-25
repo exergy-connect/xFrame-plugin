@@ -6,7 +6,7 @@
 
 Creating a video from a browser session shouldn't require a desktop screen share, a heavyweight recording suite, or a professional degree.
 
-Exergy ∞ xFrame records the current browser tab—including video and tab audio—into a shareable MP4 using simple controls. It can also take a quick PNG snapshot of the visible tab, or turn the last recording into an animated GIF. Record. Snapshot. Animate. Share.
+Exergy ∞ xFrame records the current browser tab—including video, tab audio, and optional microphone audio—into a shareable MP4 using simple controls. It can also take a quick PNG snapshot of the visible tab, or turn the last recording into an animated GIF. Record. Snapshot. Animate. Share.
 
 Built on standard browser capabilities, xFrame stays small, fast, and easy to understand.
 
@@ -35,7 +35,7 @@ It is the first conceptual twin.
 ## Features
 
 - Record the current browser tab
-- Optional tab audio capture together with video
+- Optional tab and microphone audio capture together with video
 - Video quality presets (Efficient / Standard / High) plus **Optimize for LinkedIn** (~6 Mbps, prefer H.264)
 - Save directly as MP4
 - Take a snapshot of the visible tab (full viewport or a selected region), with optional LinkedIn 1280×644 sizing and PNG/JPG/GIF output
@@ -81,6 +81,7 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 | Hide recording controls from the video | On | Omits the on-page session bar from the recording; reopen the popup (or use keys) to pause/stop |
 | Include mouse pointer in recording | Off | Draws a captureable pointer overlay; otherwise the cursor is hidden from the capture |
 | Include tab audio in recording | On | Captures tab audio with the video; turn off for silent recordings |
+| Include microphone audio in recording | Off | Captures microphone audio with the video; first use opens a setup tab where Chrome can request access |
 | Optimize for LinkedIn | Off | Selects the LinkedIn quality profile (~6 Mbps) and prefers H.264 + AAC for upload-friendly MP4 |
 | Video quality | Standard (~5 Mbps) | Efficient (~2 Mbps), Standard (~5 Mbps), or High (~8 Mbps); locked to LinkedIn when that option is on |
 
@@ -176,9 +177,9 @@ sequenceDiagram
 ```
 
 1. **Start** — The popup asks the service worker to begin a session on the active tab (with the chosen options).
-2. **Acquire** — The worker obtains a `tabCapture` stream id, opens an offscreen document, and the recorder calls `getUserMedia` with the tab media source (video, plus tab audio when enabled). Tab audio is also routed to the local `AudioContext` so you can still hear the page. Capture requests `cursor: never` unless “Include mouse pointer” is on, and aims for 30 fps.
+2. **Acquire** — The worker obtains a `tabCapture` stream id, opens an offscreen document, and the recorder calls `getUserMedia` for the tab media source and, when selected, the microphone. An `AudioContext` mixes the chosen sources into one recording track; tab audio is also routed locally so you can still hear the page. Capture requests `cursor: never` unless “Include mouse pointer” is on, and aims for 30 fps.
 3. **Countdown** — A content overlay counts down for about three seconds.
-4. **Record** — After the overlay clears, `MediaRecorder` starts with the chosen quality bitrates (MP4 when the browser can actually record it; otherwise WebM). Tab audio is captured only when enabled. The native cursor is hidden on the page; optional logo / pointer overlays and session UI follow the start options.
+4. **Record** — After the overlay clears, `MediaRecorder` starts with the chosen quality bitrates (MP4 when the browser can actually record it; otherwise WebM). Tab and microphone audio are captured only when enabled. The native cursor is hidden on the page; optional logo / pointer overlays and session UI follow the start options.
 5. **Stop & save** — The offscreen recorder stores the blob in IndexedDB. A short-lived `saver.html` page (needed because service workers lack `URL.createObjectURL`) reads the blob, downloads it via `chrome.downloads`, revokes the URL, and closes.
 
 ### Implementation notes

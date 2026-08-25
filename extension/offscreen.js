@@ -36,6 +36,8 @@ const DEFAULT_VIDEO_BITS = 5_000_000;
 const DEFAULT_AUDIO_BITS = 192_000;
 
 let captureStream = null;
+let tabCaptureStream = null;
+let microphoneStream = null;
 let audioContext = null;
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -67,6 +69,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     acquireStream(message.streamId, {
       includePointer: Boolean(message.includePointer),
       includeAudio: message.includeAudio !== false,
+      includeMicrophone: Boolean(message.includeMicrophone),
     })
       .then(() => sendResponse({ ok: true }))
       .catch((error) =>
@@ -146,11 +149,16 @@ function getRecorderStatus() {
 
 async function acquireStream(
   streamId,
-  { includePointer = false, includeAudio: wantAudio = true } = {}
+  {
+    includePointer = false,
+    includeAudio: wantAudio = true,
+    includeMicrophone = false,
+  } = {}
 ) {
   cleanup();
 
-  includeAudio = Boolean(wantAudio);
+  const includeTabAudio = Boolean(wantAudio);
+  includeAudio = includeTabAudio || Boolean(includeMicrophone);
   const cursor = includePointer ? "always" : "never";
 
   async function openStream(withAudio) {
@@ -196,9 +204,9 @@ async function acquireStream(
     throw lastError || new Error("Failed to acquire tab stream");
   }
 
-  if (includeAudio) {
+  if (includeTabAudio) {
     try {
-      captureStream = await openStream(true);
+      tabCaptureStream = await openStream(true);
     } catch (error) {
       cleanup();
       throw new Error(
@@ -207,20 +215,53 @@ async function acquireStream(
       );
     }
   } else {
-    captureStream = await openStream(false);
+    tabCaptureStream = await openStream(false);
   }
 
-  const audioTracks = captureStream.getAudioTracks();
-  if (includeAudio && audioTracks.length === 0) {
+  const audioTracks = tabCaptureStream.getAudioTracks();
+  if (includeTabAudio && audioTracks.length === 0) {
     cleanup();
     throw new Error(
       "Chrome returned a tab stream without audio. Disable Include audio to record video only."
     );
   }
-  if (includeAudio && audioTracks.length > 0) {
+  if (includeMicrophone) {
+    try {
+      microphoneStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      });
+    } catch (error) {
+      cleanup();
+      throw new Error(
+        `Could not capture microphone audio: ${String(error?.message || error)}. ` +
+          "Allow microphone access or disable Include microphone audio."
+      );
+    }
+  }
+
+  const hasTabAudio = includeTabAudio && audioTracks.length > 0;
+  const hasMicrophoneAudio = Boolean(microphoneStream?.getAudioTracks().length);
+  if (hasTabAudio || hasMicrophoneAudio) {
     audioContext = new AudioContext();
-    const source = audioContext.createMediaStreamSource(captureStream);
-    source.connect(audioContext.destination);
+    const recordingDestination = audioContext.createMediaStreamDestination();
+
+    if (hasTabAudio) {
+      const tabSource = audioContext.createMediaStreamSource(tabCaptureStream);
+      tabSource.connect(recordingDestination);
+      tabSource.connect(audioContext.destination);
+    }
+    if (hasMicrophoneAudio) {
+      const microphoneSource = audioContext.createMediaStreamSource(microphoneStream);
+      microphoneSource.connect(recordingDestination);
+    }
+
+    captureStream = new MediaStream([
+      ...tabCaptureStream.getVideoTracks(),
+      ...recordingDestination.stream.getAudioTracks(),
+    ]);
+  } else {
+    captureStream = tabCaptureStream;
   }
 }
 
@@ -662,6 +703,20 @@ function cleanup() {
       track.stop();
     }
     captureStream = null;
+  }
+
+  if (tabCaptureStream) {
+    for (const track of tabCaptureStream.getTracks()) {
+      track.stop();
+    }
+    tabCaptureStream = null;
+  }
+
+  if (microphoneStream) {
+    for (const track of microphoneStream.getTracks()) {
+      track.stop();
+    }
+    microphoneStream = null;
   }
 
   if (audioContext) {

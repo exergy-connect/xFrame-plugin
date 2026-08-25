@@ -30,6 +30,7 @@
   },
   "permissions": [
     "tabCapture",
+    "audioCapture",
     "offscreen",
     "downloads",
     "activeTab",

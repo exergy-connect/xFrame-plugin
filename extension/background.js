@@ -119,6 +119,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       hideControls: message.hideControls !== false,
       includePointer: Boolean(message.includePointer),
       includeAudio: message.includeAudio !== false,
+      includeMicrophone: Boolean(message.includeMicrophone),
       videoQuality: message.videoQuality,
     })
       .then(() => sendResponse({ ok: true }))
@@ -714,6 +715,7 @@ async function startSession({
   hideControls = true,
   includePointer = false,
   includeAudio = true,
+  includeMicrophone = false,
   videoQuality = DEFAULT_VIDEO_QUALITY,
 } = {}) {
   await ensureSessionRestored();
@@ -747,6 +749,7 @@ async function startSession({
     hideControls: Boolean(hideControls),
     includePointer: Boolean(includePointer),
     includeAudio: includeAudio !== false,
+    includeMicrophone: Boolean(includeMicrophone),
     videoQuality: qualityKey,
     preferLinkedIn: qualityKey === "linkedin",
     videoBitsPerSecond: bitrates.videoBitsPerSecond,
@@ -768,6 +771,7 @@ async function startSession({
       streamId,
       includePointer: Boolean(includePointer),
       includeAudio: session.includeAudio,
+      includeMicrophone: session.includeMicrophone,
     });
     if (!acquired?.ok) {
       throw new Error(acquired?.error || "Failed to acquire tab stream");
@@ -794,7 +798,7 @@ async function onCountdownDone() {
     videoBitsPerSecond:
       session.videoBitsPerSecond ||
       VIDEO_QUALITY_PRESETS[DEFAULT_VIDEO_QUALITY].videoBitsPerSecond,
-    audioBitsPerSecond: session.includeAudio
+    audioBitsPerSecond: session.includeAudio || session.includeMicrophone
       ? session.audioBitsPerSecond ||
         VIDEO_QUALITY_PRESETS[DEFAULT_VIDEO_QUALITY].audioBitsPerSecond
       : undefined,
