@@ -41,7 +41,7 @@ It is the first conceptual twin.
 - Take a snapshot of the visible tab (full viewport or a selected region), with optional LinkedIn 1280×644 sizing and PNG/JPG/GIF output
 - Create an animated GIF from the last saved recording (FPS, speed, optional spiralflow timing)
 - Cancel an in-progress recording without saving
-- Customize the recording logo
+- Customize the recording logo and optional end-of-video outro image
 - Lightweight implementation using standard browser APIs
 - No desktop recording
 - No unnecessary UI
@@ -78,6 +78,7 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 | Option | Default | Effect |
 | --- | --- | --- |
 | Include logo in recording | On | Watermark in the top-right (Exergy by default; choose a custom image in the popup) |
+| Show outro after recording | Off | After Stop & save, keeps recording a blurred, centered outro image for 1–10 seconds (default 3) |
 | Hide recording controls from the video | On | Omits the on-page session bar from the recording; reopen the popup (or use keys) to pause/stop |
 | Include mouse pointer in recording | Off | Draws a captureable pointer overlay; otherwise the cursor is hidden from the capture |
 | Include tab audio in recording | On | Captures tab audio with the video; turn off for silent recordings |
@@ -85,7 +86,7 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 | Optimize for LinkedIn | Off | Selects the LinkedIn quality profile (~6 Mbps) and prefers H.264 + AAC for upload-friendly MP4 |
 | Video quality | Standard (~5 Mbps) | Efficient (~2 Mbps), Standard (~5 Mbps), or High (~8 Mbps); locked to LinkedIn when that option is on |
 
-Recording, snapshot, and animate settings live on separate popup tabs (**Record** / **Snapshot** / **Animate**) so the popup stays compact. A custom recording logo is stored in extension storage and reused until you reset to the Exergy logo. Audio, quality, and GIF preferences are remembered between sessions.
+Recording, snapshot, and animate settings live on separate popup tabs (**Record** / **Snapshot** / **Animate**) so the popup stays compact. A custom recording logo is stored in extension storage. The outro image is kept in IndexedDB so large files persist, and is reused until you remove it. Audio, quality, outro duration, and GIF preferences are remembered between sessions.
 
 ### During a session
 
@@ -165,6 +166,10 @@ sequenceDiagram
   SW->>CS: showSessionBar
   User->>CS: Stop (S / bar / popup)
   CS->>SW: stopSession
+  opt Outro enabled
+    SW->>CS: show outro overlay
+    Note over CS: Blurred background, centered image
+  end
   SW->>OS: stopRecording
   OS->>IDB: putPendingRecording blob
   OS-->>SW: mime + filename metadata
@@ -180,7 +185,7 @@ sequenceDiagram
 2. **Acquire** — The worker obtains a `tabCapture` stream id, opens an offscreen document, and the recorder calls `getUserMedia` for the tab media source and, when selected, the microphone. An `AudioContext` mixes the chosen sources into one recording track; tab audio is also routed locally so you can still hear the page. Capture requests `cursor: never` unless “Include mouse pointer” is on, and aims for 30 fps.
 3. **Countdown** — A content overlay counts down for about three seconds.
 4. **Record** — After the overlay clears, `MediaRecorder` starts with the chosen quality bitrates (MP4 when the browser can actually record it; otherwise WebM). Tab and microphone audio are captured only when enabled. The native cursor is hidden on the page; optional logo / pointer overlays and session UI follow the start options.
-5. **Stop & save** — The offscreen recorder stores the blob in IndexedDB. A short-lived `saver.html` page (needed because service workers lack `URL.createObjectURL`) reads the blob, downloads it via `chrome.downloads`, revokes the URL, and closes.
+5. **Stop & save** — If an outro image is configured, it is shown on the tab (blurred background, image centered) for the chosen duration while capture continues. Then the offscreen recorder stores the blob in IndexedDB. A short-lived `saver.html` page (needed because service workers lack `URL.createObjectURL`) reads the blob, downloads it via `chrome.downloads`, revokes the URL, and closes.
 
 ### Implementation notes
 

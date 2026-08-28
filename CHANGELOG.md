@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional **outro** after Stop & save: a chosen image is shown centered on the recorded tab over a blurred background for 1–10 seconds (default 3).
 - Optional microphone audio capture, including mixing with tab audio when both sources are enabled.
 - Recording filenames include the detected video codec before the container extension (for example, `.vp8.webm`, `.vp9.mp4`, or `.h264.mp4`).
 - Local/unpacked builds convert LinkedIn WebM recordings to H.264/AAC MP4 in the extension using FFmpeg WASM, with conversion progress shown in the session overlay.

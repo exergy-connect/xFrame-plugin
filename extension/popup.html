@@ -245,7 +245,7 @@
         margin: 0 0 0 20px;
       }
 
-      /* Keep space reserved so Record height stays stable when logo is off. */
+      /* Keep space reserved so Record height stays stable when logo/outro is off. */
       .logo-options.is-collapsed {
         visibility: hidden;
         pointer-events: none;
@@ -284,6 +284,23 @@
       .logo-actions button.is-slot-hidden {
         visibility: hidden;
         pointer-events: none;
+      }
+
+      .outro-second-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px;
+        min-width: 0;
+      }
+
+      .outro-second-row .select {
+        padding: 4px 7px;
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      .logo-preview.is-empty {
+        visibility: hidden;
       }
 
       .field {
@@ -491,6 +508,43 @@
               />
             </div>
 
+            <label class="option" for="includeOutro">
+              <input id="includeOutro" type="checkbox" />
+              <span>Show outro after recording</span>
+            </label>
+            <div id="outroOptions" class="logo-options is-collapsed">
+              <img
+                id="outroPreview"
+                class="logo-preview is-empty"
+                alt="Outro image preview"
+                width="26"
+                height="26"
+              />
+              <div class="logo-actions">
+                <button id="chooseOutro" type="button" class="secondary">
+                  Choose outro image…
+                </button>
+                <div class="outro-second-row">
+                  <select id="outroDuration" class="select" aria-label="Outro duration">
+                    <option value="1">1 second</option>
+                    <option value="2">2 seconds</option>
+                    <option value="3" selected>3 seconds</option>
+                    <option value="5">5 seconds</option>
+                    <option value="10">10 seconds</option>
+                  </select>
+                  <button id="resetOutro" type="button" class="secondary is-slot-hidden">
+                    Remove
+                  </button>
+                </div>
+              </div>
+              <input
+                id="outroFile"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                hidden
+              />
+            </div>
+
             <label class="option" for="hideControls">
               <input id="hideControls" type="checkbox" checked />
               <span>Hide controls from the video</span>
@@ -679,6 +733,7 @@
         3-second countdown, then recording begins. Reopen to pause or stop.
       </p>
     </main>
+    <script src="recordingStore.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

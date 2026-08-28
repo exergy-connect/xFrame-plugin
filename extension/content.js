@@ -28,6 +28,7 @@
   let remountScheduled = false;
   let regionCleanup = null;
   let snapshotActive = false;
+  let outroActive = false;
 
   const ICON_PAUSE = `
     <svg class="frameit-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -84,6 +85,17 @@
 
     if (message.type === "frameit-start-region-select") {
       showRegionSelect()
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) =>
+          sendResponse({ ok: false, error: String(error?.message || error) })
+        );
+      return true;
+    }
+
+    if (message.type === "frameit-show-outro") {
+      showOutro({
+        imageDataUrl: normalizeLogoDataUrl(message.imageDataUrl),
+      })
         .then(() => sendResponse({ ok: true }))
         .catch((error) =>
           sendResponse({ ok: false, error: String(error?.message || error) })
@@ -278,7 +290,13 @@
       remountScheduled = false;
       if (!sessionActive || sessionStopping || hostEl?.isConnected) return;
       try {
-        await showSessionBar(sessionOptions || {});
+        if (outroActive) {
+          await showOutro({
+            imageDataUrl: sessionOptions?.outroDataUrl || null,
+          });
+        } else {
+          await showSessionBar(sessionOptions || {});
+        }
       } catch (_error) {
         // Page may be unloading.
       }
@@ -578,6 +596,68 @@
       .replace(/"/g, "&quot;");
   }
 
+  async function showOutro({ imageDataUrl = null } = {}) {
+    sessionActive = true;
+    outroActive = true;
+    sessionOptions = {
+      ...(sessionOptions || {}),
+      outroDataUrl: imageDataUrl,
+    };
+
+    const root = await ensureRoot();
+    hideTranscodeProgress();
+    stopPointer();
+    sessionUi = null;
+
+    for (const el of root.querySelectorAll(
+      ".frameit-watermark, .frameit-session-bar, .frameit-countdown"
+    )) {
+      el.remove();
+    }
+
+    hideNativeCursor(true);
+    bindSessionKeys();
+
+    let overlay = root.querySelector(".frameit-outro");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "frameit-outro";
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.innerHTML = `<img class="frameit-outro__image" alt="" />`;
+      root.appendChild(overlay);
+    }
+
+    const img = overlay.querySelector(".frameit-outro__image");
+    const src = normalizeLogoDataUrl(imageDataUrl);
+    if (src && img.getAttribute("src") !== src) {
+      img.src = src;
+    } else if (!src) {
+      img.removeAttribute("src");
+    }
+
+    if (src) {
+      await waitForImage(img);
+    }
+    await waitFrames(2);
+  }
+
+  function waitForImage(img) {
+    if (img.complete && img.naturalWidth > 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      img.addEventListener("load", done, { once: true });
+      img.addEventListener("error", done, { once: true });
+      window.setTimeout(done, 2000);
+    });
+  }
+
   async function showSessionBar({
     includeLogo = true,
     logoDataUrl = null,
@@ -591,6 +671,7 @@
       includePointer,
     };
     sessionActive = true;
+    outroActive = false;
 
     const root = await ensureRoot();
     clearShadowContent();
@@ -704,10 +785,10 @@
       const key = String(event.key || "").toLowerCase();
       if (key === "p") {
         event.preventDefault();
-        togglePause();
+        if (!outroActive) togglePause();
       } else if (key === "s") {
         event.preventDefault();
-        stopAndSave();
+        if (!outroActive) stopAndSave();
       } else if (key === "escape") {
         event.preventDefault();
         cancelRecording();
@@ -724,7 +805,7 @@
   }
 
   async function togglePause() {
-    if (sessionBusy) return;
+    if (sessionBusy || outroActive) return;
     sessionBusy = true;
     const { pauseBtn, stopBtn, cancelBtn, bar, updateTime } = sessionUi || {};
     if (pauseBtn) pauseBtn.disabled = true;
@@ -780,9 +861,8 @@
   }
 
   async function stopAndSave() {
-    if (sessionBusy) return;
+    if (sessionBusy || outroActive) return;
     sessionBusy = true;
-    beginStoppingUi();
     try {
       const result = await chrome.runtime.sendMessage({
         type: "frameit-stop-session",
@@ -793,6 +873,7 @@
     } catch (error) {
       sessionBusy = false;
       sessionStopping = false;
+      outroActive = false;
       frozenElapsedMs = null;
       hideTranscodeProgress();
       const { pauseBtn, stopBtn, cancelBtn } = sessionUi || {};
@@ -813,6 +894,7 @@
 
   function beginStoppingUi() {
     sessionStopping = true;
+    outroActive = false;
     if (frozenElapsedMs == null) {
       frozenElapsedMs = getElapsedMs();
     }
@@ -885,7 +967,7 @@
   }
 
   async function cancelRecording() {
-    if (sessionBusy) return;
+    if (sessionBusy && !outroActive) return;
     sessionBusy = true;
     const { pauseBtn, stopBtn, cancelBtn } = sessionUi || {};
     if (pauseBtn) pauseBtn.disabled = true;
@@ -980,6 +1062,7 @@
   function teardown() {
     sessionActive = false;
     snapshotActive = false;
+    outroActive = false;
     sessionOptions = null;
     remountScheduled = false;
     sessionStopping = false;

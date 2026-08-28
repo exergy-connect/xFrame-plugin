@@ -29,10 +29,17 @@ const VIDEO_QUALITY_PRESETS = {
   linkedin: { videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 },
 };
 const DEFAULT_VIDEO_QUALITY = "standard";
+const DEFAULT_OUTRO_DURATION_SEC = 3;
 
 function resolveVideoQuality(value) {
   const key = typeof value === "string" ? value.toLowerCase() : "";
   return VIDEO_QUALITY_PRESETS[key] ? key : DEFAULT_VIDEO_QUALITY;
+}
+
+function resolveOutroDurationSec(value) {
+  const n = Math.round(Number(value));
+  if (n === 1 || n === 2 || n === 3 || n === 5 || n === 10) return n;
+  return DEFAULT_OUTRO_DURATION_SEC;
 }
 
 const LAST_RECORDING_FILENAME_KEY = "lastRecordingFilename";
@@ -64,6 +71,11 @@ let sessionRestorePromise = null;
 let snapshotState = null;
 /** @type {{ phase: string, progress: number, error?: string, tabId?: number } | null} */
 let gifJob = null;
+let outroTimerId = null;
+let outroTimerResolve = null;
+let stopInFlight = null;
+/** In-memory outro data URL for the active session (not persisted). */
+let sessionOutroDataUrl = null;
 
 function isExtensionPageSender(sender) {
   return typeof sender?.url === "string" && sender.url.startsWith(EXTENSION_ORIGIN);
@@ -116,6 +128,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     startSession({
       includeLogo: message.includeLogo !== false,
       logoDataUrl: normalizeLogoDataUrl(message.logoDataUrl),
+      includeOutro: Boolean(message.includeOutro),
+      outroDurationSec: message.outroDurationSec,
       hideControls: message.hideControls !== false,
       includePointer: Boolean(message.includePointer),
       includeAudio: message.includeAudio !== false,
@@ -331,7 +345,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!session || session.tabId !== tabId) return;
-  if (changeInfo.status === "complete" && session.phase === "recording") {
+  if (changeInfo.status === "complete" &&
+      (session.phase === "recording" || session.phase === "outro")) {
     ensureSessionOverlay().catch(() => {});
   }
 });
@@ -712,6 +727,8 @@ function blobToDataUrl(blob) {
 async function startSession({
   includeLogo = true,
   logoDataUrl = null,
+  includeOutro = false,
+  outroDurationSec = DEFAULT_OUTRO_DURATION_SEC,
   hideControls = true,
   includePointer = false,
   includeAudio = true,
@@ -737,6 +754,10 @@ async function startSession({
   const sessionStartedAt = new Date();
   const qualityKey = resolveVideoQuality(videoQuality);
   const bitrates = VIDEO_QUALITY_PRESETS[qualityKey];
+  const outroDataUrl = includeOutro ? await loadOutroDataUrl() : null;
+  if (includeOutro && !outroDataUrl) {
+    throw new Error("Choose an outro image, or turn off the outro.");
+  }
 
   session = {
     tabId: tab.id,
@@ -746,6 +767,8 @@ async function startSession({
     mimeType: "",
     includeLogo: Boolean(includeLogo),
     logoDataUrl: includeLogo ? normalizeLogoDataUrl(logoDataUrl) : null,
+    includeOutro: Boolean(includeOutro && outroDataUrl),
+    outroDurationSec: resolveOutroDurationSec(outroDurationSec),
     hideControls: Boolean(hideControls),
     includePointer: Boolean(includePointer),
     includeAudio: includeAudio !== false,
@@ -758,6 +781,7 @@ async function startSession({
     pausedAt: 0,
     totalPausedMs: 0,
   };
+  sessionOutroDataUrl = outroDataUrl;
   await persistSession();
 
   try {
@@ -857,9 +881,79 @@ async function resumeSession() {
 }
 
 async function stopSession() {
+  if (stopInFlight) return stopInFlight;
+  stopInFlight = stopSessionBody().finally(() => {
+    stopInFlight = null;
+  });
+  return stopInFlight;
+}
+
+async function stopSessionBody() {
   await ensureSessionRestored();
   if (!session) {
     throw new Error("No active session");
+  }
+  if (session.phase === "stopping") {
+    throw new Error("Session is already stopping");
+  }
+
+  const outroPlayed = await playOutroIfNeeded();
+  if (!session) {
+    return { cancelled: true };
+  }
+  if (
+    !outroPlayed &&
+    session.phase !== "recording" &&
+    session.phase !== "outro"
+  ) {
+    throw new Error("Session is not recording");
+  }
+
+  return finalizeStop();
+}
+
+async function playOutroIfNeeded() {
+  if (!session || session.phase === "outro") {
+    if (session?.phase === "outro") {
+      const remaining = Math.max(0, (session.outroEndsAt || 0) - Date.now());
+      await waitOutroMs(remaining);
+    }
+    return Boolean(session);
+  }
+
+  const imageUrl = session.includeOutro
+    ? sessionOutroDataUrl || (await loadOutroDataUrl())
+    : null;
+  const durationMs = resolveOutroDurationSec(session.outroDurationSec) * 1000;
+  if (!imageUrl || durationMs <= 0 || session.phase !== "recording") {
+    return false;
+  }
+
+  if (session.paused) {
+    await resumeSession();
+  }
+
+  session.phase = "outro";
+  session.outroEndsAt = Date.now() + durationMs;
+  await persistSession();
+
+  try {
+    await chrome.tabs.sendMessage(session.tabId, {
+      type: "frameit-show-outro",
+      imageDataUrl: imageUrl,
+    });
+  } catch (_error) {
+    // Overlay may be unavailable; still hold the duration so the end is stable.
+  }
+
+  await waitOutroMs(Math.max(0, session.outroEndsAt - Date.now()));
+  return Boolean(session);
+}
+
+async function finalizeStop() {
+  await ensureSessionRestored();
+  if (!session) {
+    return { cancelled: true };
   }
 
   const { tabId, tabTitle, sessionStartedAt, mimeType } = session;
@@ -927,6 +1021,7 @@ async function stopSession() {
     }
 
     session = null;
+    sessionOutroDataUrl = null;
     await persistSession();
     await closeOffscreenDocument();
 
@@ -935,6 +1030,32 @@ async function stopSession() {
     await abortSession();
     throw error;
   }
+}
+
+function clearOutroTimer() {
+  if (outroTimerId != null) {
+    clearTimeout(outroTimerId);
+    outroTimerId = null;
+  }
+  if (outroTimerResolve) {
+    const resolve = outroTimerResolve;
+    outroTimerResolve = null;
+    resolve();
+  }
+}
+
+function waitOutroMs(ms) {
+  clearOutroTimer();
+  const wait = Math.max(0, Number(ms) || 0);
+  if (wait <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    outroTimerResolve = resolve;
+    outroTimerId = setTimeout(() => {
+      outroTimerId = null;
+      outroTimerResolve = null;
+      resolve();
+    }, wait);
+  });
 }
 
 async function cancelSession() {
@@ -948,7 +1069,7 @@ async function cancelSession() {
 async function getStatus() {
   await ensureSessionRestored();
   await ensureGifJobRestored();
-  if (session?.phase === "recording") {
+  if (session?.phase === "recording" || session?.phase === "outro") {
     await ensureSessionOverlay().catch(() => {});
   }
   let hasLast = false;
@@ -976,6 +1097,7 @@ async function getStatus() {
     pausedAt: session?.pausedAt || null,
     totalPausedMs: session?.totalPausedMs || 0,
     hideControls: session?.hideControls !== false,
+    includeOutro: Boolean(session?.includeOutro && sessionOutroDataUrl),
     snapshotActive: Boolean(snapshotState),
     snapshotPhase: snapshotState?.phase || null,
     hasLastRecording: hasLast,
@@ -1042,8 +1164,10 @@ async function downloadPendingRecording(filename) {
 }
 
 async function abortSession() {
+  clearOutroTimer();
   const tabId = session?.tabId;
   session = null;
+  sessionOutroDataUrl = null;
   await persistSession();
 
   try {
@@ -1226,7 +1350,13 @@ async function forwardTranscodeProgressToSessionTab(message) {
 
 async function ensureSessionOverlay() {
   if (!session || session.tabId == null) return;
-  if (session.phase !== "recording" && session.phase !== "countdown") return;
+  if (
+    session.phase !== "recording" &&
+    session.phase !== "countdown" &&
+    session.phase !== "outro"
+  ) {
+    return;
+  }
 
   try {
     await injectOverlay(session.tabId);
@@ -1242,6 +1372,18 @@ async function ensureSessionOverlay() {
       });
     } catch (_error) {
       // ignore
+    }
+    return;
+  }
+
+  if (session.phase === "outro") {
+    try {
+      await chrome.tabs.sendMessage(session.tabId, {
+        type: "frameit-show-outro",
+        imageDataUrl: sessionOutroDataUrl || (await loadOutroDataUrl()),
+      });
+    } catch (_error) {
+      // Overlay may be unavailable on restricted pages.
     }
     return;
   }
@@ -1265,8 +1407,9 @@ async function ensureSessionOverlay() {
 
 function serializeSession(value) {
   if (!value) return null;
+  const { outroDataUrl: _omitOutro, ...rest } = value;
   return {
-    ...value,
+    ...rest,
     sessionStartedAt:
       value.sessionStartedAt instanceof Date
         ? value.sessionStartedAt.toISOString()
@@ -1341,15 +1484,37 @@ async function restoreSession() {
     return null;
   }
 
+  const wasOutro = stored.phase === "outro";
   session = {
     ...stored,
     mimeType: stored.mimeType || recorder.mimeType || "",
-    paused: Boolean(recorder.paused),
-    phase: "recording",
+    paused: wasOutro ? false : Boolean(recorder.paused),
+    phase: wasOutro ? "outro" : "recording",
     recordingStartedAt: stored.recordingStartedAt || Date.now(),
   };
 
+  if (wasOutro && recorder.paused) {
+    try {
+      await sendToOffscreen({ type: "frameit-resume-recording" });
+    } catch (_error) {
+      // Continue; outro wait still proceeds toward stop.
+    }
+  }
+
   await persistSession();
+
+  if (wasOutro || session.includeOutro) {
+    sessionOutroDataUrl = await loadOutroDataUrl();
+  }
+
+  if (wasOutro) {
+    queueMicrotask(() => {
+      stopSession().catch(() => {
+        abortSession().catch(() => {});
+      });
+    });
+  }
+
   return session;
 }
 
@@ -1427,10 +1592,23 @@ function delay(ms) {
 }
 
 function normalizeLogoDataUrl(value) {
+  return normalizeImageDataUrl(value, 700_000);
+}
+
+async function loadOutroDataUrl() {
+  try {
+    const blob = await getOutroImage();
+    if (!blob || blob.size <= 0) return null;
+    return await blobToDataUrl(blob);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function normalizeImageDataUrl(value, maxLength) {
   if (typeof value !== "string") return null;
   if (!value.startsWith("data:image/")) return null;
-  // Keep message payloads bounded; popup already enforces ~500 KB files.
-  if (value.length > 700_000) return null;
+  if (value.length > maxLength) return null;
   return value;
 }
 

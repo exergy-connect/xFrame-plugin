@@ -89,6 +89,29 @@
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
 }
 
+.frameit-outro {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(8, 12, 18, 0.32);
+  backdrop-filter: blur(28px) saturate(1.15);
+  -webkit-backdrop-filter: blur(28px) saturate(1.15);
+  z-index: 2147483645;
+}
+
+.frameit-outro__image {
+  display: block;
+  max-width: 72%;
+  max-height: 72%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 40px rgba(0, 0, 0, 0.42));
+}
+
 .frameit-pointer {
   position: absolute;
   top: 0;

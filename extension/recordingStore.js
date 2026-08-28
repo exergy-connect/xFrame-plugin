@@ -3,6 +3,7 @@ const FRAMEIT_DB_VERSION = 1;
 const FRAMEIT_STORE = "recordings";
 const FRAMEIT_PENDING_KEY = "pending";
 const FRAMEIT_LAST_KEY = "last";
+const FRAMEIT_OUTRO_KEY = "outro";
 
 function openRecordingDb() {
   return new Promise((resolve, reject) => {
@@ -93,4 +94,40 @@ async function getLastRecording() {
 async function hasLastRecording() {
   const blob = await getLastRecording();
   return Boolean(blob && blob.size > 0);
+}
+
+async function putOutroImage(blob) {
+  if (!blob || !(blob instanceof Blob) || blob.size <= 0) {
+    throw new Error("Outro image is empty");
+  }
+  const db = await openRecordingDb();
+  try {
+    const tx = db.transaction(FRAMEIT_STORE, "readwrite");
+    tx.objectStore(FRAMEIT_STORE).put(blob, FRAMEIT_OUTRO_KEY);
+    await waitForTransaction(tx);
+  } finally {
+    db.close();
+  }
+}
+
+async function getOutroImage() {
+  const db = await openRecordingDb();
+  try {
+    const tx = db.transaction(FRAMEIT_STORE, "readonly");
+    const blob = await idbRequest(tx.objectStore(FRAMEIT_STORE).get(FRAMEIT_OUTRO_KEY));
+    return blob && blob.size > 0 ? blob : null;
+  } finally {
+    db.close();
+  }
+}
+
+async function clearOutroImage() {
+  const db = await openRecordingDb();
+  try {
+    const tx = db.transaction(FRAMEIT_STORE, "readwrite");
+    tx.objectStore(FRAMEIT_STORE).delete(FRAMEIT_OUTRO_KEY);
+    await waitForTransaction(tx);
+  } finally {
+    db.close();
+  }
 }

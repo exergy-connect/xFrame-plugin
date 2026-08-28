@@ -1,5 +1,8 @@
 const DEFAULT_LOGO_URL = "assets/exergy_connect_logo.png";
 const LOGO_STORAGE_KEY = "customLogoDataUrl";
+const INCLUDE_OUTRO_KEY = "includeOutro";
+const OUTRO_DURATION_KEY = "outroDurationSec";
+const OUTRO_STORAGE_KEY = "outroImageDataUrl"; // legacy data-URL key, migrated to IndexedDB
 const INCLUDE_AUDIO_KEY = "includeAudio";
 const INCLUDE_MICROPHONE_KEY = "includeMicrophone";
 const VIDEO_QUALITY_KEY = "videoQuality";
@@ -14,6 +17,7 @@ const GIF_SPEED_KEY = "gifSpeed";
 const GIF_SPIRALFLOW_KEY = "gifSpiralflow";
 const MAX_LOGO_BYTES = 500_000;
 const DEFAULT_VIDEO_QUALITY = "standard";
+const DEFAULT_OUTRO_DURATION = 3;
 const DEFAULT_GIF_FPS = 10;
 const DEFAULT_GIF_SPEED = 100;
 
@@ -38,6 +42,13 @@ const logoPreviewEl = document.getElementById("logoPreview");
 const chooseLogoBtn = document.getElementById("chooseLogo");
 const resetLogoBtn = document.getElementById("resetLogo");
 const logoFileEl = document.getElementById("logoFile");
+const includeOutroEl = document.getElementById("includeOutro");
+const outroOptionsEl = document.getElementById("outroOptions");
+const outroPreviewEl = document.getElementById("outroPreview");
+const chooseOutroBtn = document.getElementById("chooseOutro");
+const resetOutroBtn = document.getElementById("resetOutro");
+const outroFileEl = document.getElementById("outroFile");
+const outroDurationEl = document.getElementById("outroDuration");
 const hideControlsEl = document.getElementById("hideControls");
 const includePointerEl = document.getElementById("includePointer");
 const includeAudioEl = document.getElementById("includeAudio");
@@ -75,12 +86,15 @@ let timerId = null;
 let gifPollId = null;
 let statusSnapshot = null;
 let customLogoDataUrl = null;
+let hasOutroImage = false;
+let outroPreviewUrl = null;
 let activeTab = "record";
 let uiBusy = false;
 let lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
-let hasLastRecording = false;
+let hasSavedRecording = false;
 
 initLogoSettings();
+initOutroSettings();
 initRecordingSettings();
 initSnapshotSettings();
 initAnimateSettings();
@@ -97,6 +111,12 @@ includeLogoEl.addEventListener("change", () => {
   syncLogoOptionsVisibility();
   lockPanelsHeight();
 });
+includeOutroEl.addEventListener("change", () => {
+  syncOutroOptionsVisibility();
+  persistRecordingSettings();
+  lockPanelsHeight();
+});
+outroDurationEl.addEventListener("change", persistRecordingSettings);
 includeAudioEl.addEventListener("change", persistRecordingSettings);
 includeMicrophoneEl.addEventListener("change", persistRecordingSettings);
 videoLinkedInEl.addEventListener("change", () => {
@@ -149,6 +169,41 @@ logoFileEl.addEventListener("change", async () => {
   }
 });
 
+chooseOutroBtn.addEventListener("click", () => {
+  outroFileEl.click();
+});
+
+resetOutroBtn.addEventListener("click", async () => {
+  hasOutroImage = false;
+  await clearOutroImage();
+  await chrome.storage.local.remove(OUTRO_STORAGE_KEY);
+  applyOutroPreview(null);
+  lockPanelsHeight();
+  setStatus("Outro image removed.");
+});
+
+outroFileEl.addEventListener("change", async () => {
+  const file = outroFileEl.files?.[0];
+  outroFileEl.value = "";
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    setStatus("Please choose an image file.", true);
+    return;
+  }
+
+  try {
+    await putOutroImage(file);
+    hasOutroImage = true;
+    await chrome.storage.local.remove(OUTRO_STORAGE_KEY);
+    applyOutroPreview(file);
+    lockPanelsHeight();
+    setStatus("Outro image saved.");
+  } catch (error) {
+    setStatus(String(error?.message || error), true);
+  }
+});
+
 snapshotModeFullEl.addEventListener("change", persistSnapshotSettings);
 snapshotModeRegionEl.addEventListener("change", persistSnapshotSettings);
 snapshotDelayEl.addEventListener("change", persistSnapshotSettings);
@@ -177,10 +232,15 @@ startBtn.addEventListener("click", async () => {
       setStatus("Starting session…");
     }
     await persistRecordingSettings();
+    if (includeOutroEl.checked && !hasOutroImage) {
+      throw new Error("Choose an outro image, or turn off the outro.");
+    }
     const result = await chrome.runtime.sendMessage({
       type: "frameit-start-session",
       includeLogo: includeLogoEl.checked,
       logoDataUrl: includeLogoEl.checked ? customLogoDataUrl : null,
+      includeOutro: includeOutroEl.checked,
+      outroDurationSec: selectedOutroDuration(),
       hideControls: hideControlsEl.checked,
       includePointer: includePointerEl.checked,
       includeAudio: includeAudioEl.checked,
@@ -316,14 +376,23 @@ stopBtn.addEventListener("click", async () => {
   clearTimer();
   setStatus("Saving…");
   try {
+    if (statusSnapshot?.includeOutro) {
+      setStatus("Showing outro…");
+    }
     const result = await chrome.runtime.sendMessage({
       type: "frameit-stop-session",
     });
     if (!result?.ok) {
       throw new Error(result?.error || "Could not save the recording.");
     }
+    if (result.cancelled) {
+      statusSnapshot = null;
+      showIdle();
+      setStatus("Recording discarded.");
+      return;
+    }
     statusSnapshot = null;
-    hasLastRecording = true;
+    hasSavedRecording = true;
     showIdle();
     setStatus("Saved to Downloads.");
   } catch (error) {
@@ -373,6 +442,50 @@ async function initLogoSettings() {
   syncLogoOptionsVisibility();
 }
 
+async function initOutroSettings() {
+  try {
+    const stored = await chrome.storage.local.get([
+      INCLUDE_OUTRO_KEY,
+      OUTRO_STORAGE_KEY,
+      OUTRO_DURATION_KEY,
+    ]);
+    includeOutroEl.checked = stored?.[INCLUDE_OUTRO_KEY] === true;
+    outroDurationEl.value = String(
+      normalizeOutroDuration(stored?.[OUTRO_DURATION_KEY])
+    );
+
+    let blob = await getOutroImage();
+    const legacy = stored?.[OUTRO_STORAGE_KEY];
+    if (
+      !blob &&
+      typeof legacy === "string" &&
+      legacy.startsWith("data:image/")
+    ) {
+      blob = await dataUrlToBlob(legacy);
+      if (blob) {
+        await putOutroImage(blob);
+        await chrome.storage.local.remove(OUTRO_STORAGE_KEY);
+      }
+    } else if (legacy) {
+      await chrome.storage.local.remove(OUTRO_STORAGE_KEY);
+    }
+
+    hasOutroImage = Boolean(blob && blob.size > 0);
+    applyOutroPreview(hasOutroImage ? blob : null);
+  } catch (_error) {
+    includeOutroEl.checked = false;
+    hasOutroImage = false;
+    outroDurationEl.value = String(DEFAULT_OUTRO_DURATION);
+    applyOutroPreview(null);
+  }
+  syncOutroOptionsVisibility();
+  lockPanelsHeight();
+}
+
+function dataUrlToBlob(dataUrl) {
+  return fetch(dataUrl).then((response) => response.blob());
+}
+
 async function initRecordingSettings() {
   try {
     const stored = await chrome.storage.local.get([
@@ -405,6 +518,8 @@ async function persistRecordingSettings() {
     [INCLUDE_MICROPHONE_KEY]: includeMicrophoneEl.checked,
     [VIDEO_LINKEDIN_KEY]: videoLinkedInEl.checked,
     [VIDEO_QUALITY_KEY]: selectedVideoQuality(),
+    [INCLUDE_OUTRO_KEY]: includeOutroEl.checked,
+    [OUTRO_DURATION_KEY]: selectedOutroDuration(),
   });
 }
 
@@ -559,8 +674,38 @@ function applyLogoPreview() {
   resetLogoBtn.classList.toggle("is-slot-hidden", !customLogoDataUrl);
 }
 
+function applyOutroPreview(blob) {
+  if (outroPreviewUrl) {
+    URL.revokeObjectURL(outroPreviewUrl);
+    outroPreviewUrl = null;
+  }
+  if (blob) {
+    outroPreviewUrl = URL.createObjectURL(blob);
+    outroPreviewEl.src = outroPreviewUrl;
+    outroPreviewEl.classList.remove("is-empty");
+  } else {
+    outroPreviewEl.removeAttribute("src");
+    outroPreviewEl.classList.add("is-empty");
+  }
+  resetOutroBtn.classList.toggle("is-slot-hidden", !blob);
+}
+
 function syncLogoOptionsVisibility() {
   logoOptionsEl.classList.toggle("is-collapsed", !includeLogoEl.checked);
+}
+
+function syncOutroOptionsVisibility() {
+  outroOptionsEl.classList.toggle("is-collapsed", !includeOutroEl.checked);
+}
+
+function selectedOutroDuration() {
+  return normalizeOutroDuration(outroDurationEl.value);
+}
+
+function normalizeOutroDuration(value) {
+  const n = Math.round(Number(value));
+  if (n === 1 || n === 2 || n === 3 || n === 5 || n === 10) return n;
+  return DEFAULT_OUTRO_DURATION;
 }
 
 function lockPanelsHeight() {
@@ -654,13 +799,19 @@ async function refreshStatus() {
     const result = await chrome.runtime.sendMessage({
       type: "frameit-get-status",
     });
-    hasLastRecording = Boolean(result?.hasLastRecording);
+    hasSavedRecording = Boolean(result?.hasLastRecording);
     updateAnimateSource(result?.lastRecordingFilename);
 
     if (result?.active) {
       statusSnapshot = result;
       showActive(result);
-      setStatus(`Session in progress (${result.phase || "active"}).`);
+      if (result.phase === "outro") {
+        setStatus("Showing outro…");
+      } else if (result.phase === "stopping") {
+        setStatus("Converting to MP4…");
+      } else {
+        setStatus(`Session in progress (${result.phase || "active"}).`);
+      }
       return;
     }
     if (result?.snapshotActive) {
@@ -697,9 +848,9 @@ async function refreshStatus() {
 }
 
 function updateAnimateSource(filename) {
-  if (hasLastRecording && filename) {
+  if (hasSavedRecording && filename) {
     animateSourceEl.textContent = `Last recording: ${filename}`;
-  } else if (hasLastRecording) {
+  } else if (hasSavedRecording) {
     animateSourceEl.textContent = "Last recording ready to convert.";
   } else {
     animateSourceEl.textContent =
@@ -771,13 +922,15 @@ function showActive(status) {
   hintEl.textContent = HINTS.active;
 
   const canControl = status.phase === "recording";
+  const canStop = status.phase === "recording";
   const canCancel =
     status.phase === "recording" ||
     status.phase === "countdown" ||
     status.phase === "acquiring" ||
-    status.phase === "stopping";
+    status.phase === "stopping" ||
+    status.phase === "outro";
   pauseBtn.disabled = !canControl;
-  stopBtn.disabled = !canControl;
+  stopBtn.disabled = !canStop;
   cancelBtn.disabled = !canCancel;
   pauseBtn.textContent = status.paused ? "Continue" : "Pause";
 
@@ -791,6 +944,18 @@ function showActive(status) {
       });
     }
     setStatus("Converting to MP4…");
+  } else if (status.phase === "outro") {
+    pauseBtn.disabled = true;
+    stopBtn.disabled = true;
+    if (status.recordingStartedAt) {
+      updateActiveTime(status);
+      clearTimer();
+      timerId = window.setInterval(
+        () => updateActiveTime(statusSnapshot || status),
+        250
+      );
+    }
+    setStatus("Showing outro…");
   } else if (status.recordingStartedAt) {
     updateActiveTime(status);
     clearTimer();
@@ -806,6 +971,8 @@ function showActive(status) {
 
 function setOptionsDisabled(disabled) {
   includeLogoEl.disabled = disabled;
+  includeOutroEl.disabled = disabled;
+  outroDurationEl.disabled = disabled;
   hideControlsEl.disabled = disabled;
   includePointerEl.disabled = disabled;
   includeAudioEl.disabled = disabled;
@@ -814,6 +981,9 @@ function setOptionsDisabled(disabled) {
   chooseLogoBtn.disabled = disabled;
   resetLogoBtn.disabled = disabled;
   logoFileEl.disabled = disabled;
+  chooseOutroBtn.disabled = disabled;
+  resetOutroBtn.disabled = disabled;
+  outroFileEl.disabled = disabled;
   if (disabled) {
     videoQualityEl.disabled = true;
   } else {
@@ -838,7 +1008,7 @@ function setAnimateControlsDisabled(disabled) {
 }
 
 function syncCreateGifEnabled() {
-  createGifBtn.disabled = !hasLastRecording || uiBusy;
+  createGifBtn.disabled = !hasSavedRecording || uiBusy;
   createGifBtn.textContent = "Create GIF";
 }
 
