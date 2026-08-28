@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Outro overlay is shown after Stop & save even when the tab is in a fullscreen video player (exits fullscreen and promotes the overlay into the top layer).
+
 ## [1.2.0] - 2026-08-28
 
 ### Added

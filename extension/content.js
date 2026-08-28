@@ -175,7 +175,13 @@
   });
 
   document.addEventListener("fullscreenchange", () => {
-    if ((!sessionActive && !snapshotActive) || !hostEl) return;
+    if ((!sessionActive && !snapshotActive && !outroActive) || !hostEl) {
+      return;
+    }
+    if (outroActive && document.fullscreenElement) {
+      exitPageFullscreen();
+      return;
+    }
     placeHost(hostEl);
   });
 
@@ -246,17 +252,27 @@
   function placeHost(host) {
     const fullscreenEl = document.fullscreenElement;
     const parent =
-      fullscreenEl && canContainOverlay(fullscreenEl)
+      !outroActive && fullscreenEl && canContainOverlay(fullscreenEl)
         ? fullscreenEl
         : document.documentElement;
     if (host.parentElement !== parent) {
       parent.appendChild(host);
     }
+    if (outroActive) {
+      promoteHostToTopLayer({ restack: false });
+    }
     promotePointerToTopLayer({ restack: false });
   }
 
   function promotePointerToTopLayer({ restack = false } = {}) {
-    const el = pointerEl;
+    showAsTopLayerPopover(pointerEl, { restack });
+  }
+
+  function promoteHostToTopLayer({ restack = false } = {}) {
+    showAsTopLayerPopover(hostEl, { restack });
+  }
+
+  function showAsTopLayerPopover(el, { restack = false } = {}) {
     if (!el?.isConnected || typeof el.showPopover !== "function") return;
     try {
       if (el.getAttribute("popover") !== "manual") {
@@ -275,6 +291,27 @@
     } catch (_error) {
       // Popover API can reject while the document is navigating or fullscreening.
     }
+  }
+
+  async function exitPageFullscreen() {
+    if (!document.fullscreenElement) return;
+    const wait = new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        document.removeEventListener("fullscreenchange", finish);
+        resolve();
+      };
+      document.addEventListener("fullscreenchange", finish);
+      window.setTimeout(finish, 400);
+    });
+    try {
+      await document.exitFullscreen();
+    } catch (_error) {
+      // Site or browser may reject; the overlay still attempts to show.
+    }
+    await wait;
   }
 
   function clearShadowContent() {
@@ -315,7 +352,10 @@
     // Poll lightly: busy SPAs mutate constantly, and fullscreen/top-layer
     // changes can detach the host without a reliable single mutation target.
     guardTimerId = window.setInterval(() => {
-      if (!sessionActive && !snapshotActive) return;
+      if (!sessionActive && !snapshotActive && !outroActive) return;
+      if (outroActive && document.fullscreenElement) {
+        exitPageFullscreen();
+      }
       if (hostEl?.isConnected) {
         placeHost(hostEl);
         return;
@@ -674,6 +714,10 @@
       outroDataUrl: imageDataUrl,
     };
 
+    // Native fullscreen video is composited above page overlays (often in a
+    // hardware plane). Leave fullscreen so the outro can cover the tab.
+    await exitPageFullscreen();
+
     const root = await ensureRoot();
     hideTranscodeProgress();
     stopPointer();
@@ -708,6 +752,7 @@
     if (src) {
       await waitForImage(img);
     }
+    promoteHostToTopLayer({ restack: true });
     await waitFrames(2);
   }
 
@@ -1144,6 +1189,11 @@
     sessionUi = null;
     sessionBusy = false;
     if (hostEl) {
+      try {
+        if (hostEl.matches?.(":popover-open")) hostEl.hidePopover();
+      } catch (_error) {
+        // Element may already be detached.
+      }
       hostEl.remove();
       hostEl = null;
       shadowRoot = null;

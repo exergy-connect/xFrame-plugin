@@ -2,7 +2,7 @@
   all: initial;
   position: fixed !important;
   inset: 0 !important;
-  z-index: 2147483646 !important;
+  z-index: 2147483647 !important;
   pointer-events: none !important;
   font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
   display: block !important;
@@ -22,6 +22,10 @@
 }
 
 :host([data-frameit-hidden]) {
+  display: none !important;
+}
+
+:host::backdrop {
   display: none !important;
 }
 
