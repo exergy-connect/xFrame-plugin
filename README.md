@@ -34,19 +34,17 @@ It is the first conceptual twin.
 
 ## Features
 
-- Record the current browser tab
-- Optional tab and microphone audio capture together with video
-- Video quality presets (Efficient / Standard / High) plus **Optimize for LinkedIn** (~6 Mbps, prefer H.264)
-- Save directly as MP4
-- Take a snapshot of the visible tab (full viewport or a selected region), with optional LinkedIn 1280×644 sizing and PNG/JPG/GIF output
-- Create an animated GIF from the last saved recording (FPS, speed, optional spiralflow timing)
-- Cancel an in-progress recording without saving
-- Customize the recording logo and optional end-of-video outro image
-- Lightweight implementation using standard browser APIs
-- No desktop recording
-- No unnecessary UI
-- Optional recording controls (popup or keyboard shortcuts)
-- Optional mouse pointer overlay
+- Record the current browser tab to MP4 when the browser can encode it (otherwise WebM)
+- Optional tab audio and microphone audio, mixed when both are enabled
+- Video quality presets (Efficient / Standard / High) plus **Optimize for LinkedIn** (~6 Mbps, prefer H.264/AAC MP4)
+- Optional logo watermark and end-of-video outro (centered image over a blurred background, 1–10 seconds)
+- Optional mouse pointer overlay that stays visible over page dialogs and popovers
+- Pause, stop & save, or cancel from the popup, on-page bar, or **P** / **S** / **Esc**
+- Snapshot the visible tab or a selected region (PNG / JPG / GIF, optional LinkedIn 1280×644)
+- Animate the last saved recording into a GIF (FPS, speed, optional spiralflow timing)
+- Record / Snapshot / Animate tabs in the toolbar popup
+- Local/unpacked builds can convert LinkedIn WebM to H.264/AAC MP4 in the extension
+- No desktop recording; lightweight UI on standard browser APIs
 
 Typical recordings are approximately **0.25–1 MB/s** depending on the quality preset, resolution, motion, and whether audio is included (Efficient ≈ 2 Mbps video; Standard ≈ 5 Mbps; High ≈ 8 Mbps).
 
