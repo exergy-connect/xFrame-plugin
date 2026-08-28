@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-28
+
 ### Added
 
 - Optional **outro** after Stop & save: a chosen image is shown centered on the recorded tab over a blurred background for 1–10 seconds (default 3).
@@ -20,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Optimize for LinkedIn** no longer falls back to WebM; it saves MP4 or reports that MP4 recording is unavailable.
 - Tab recording starts correctly when FFmpeg transcoding is enabled; extension-wide cross-origin isolation no longer prevents the offscreen recorder from consuming the tab stream.
 - FFmpeg WebM-to-MP4 conversion avoids pthread deadlocks and VP9 decoder `Resource temporarily unavailable` failures by preloading a larger worker pool and constraining decoder threads.
+
+### Changed
+
+- Extension version **1.2.0**.
 
 ## [1.1.0] - 2026-08-22
 
