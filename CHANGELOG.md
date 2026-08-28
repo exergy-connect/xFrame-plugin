@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Include mouse pointer** stays visible over modal dialogs and popovers by promoting the pointer overlay into the browser top layer.
 - **Optimize for LinkedIn** no longer falls back to WebM; it saves MP4 or reports that MP4 recording is unavailable.
 - Tab recording starts correctly when FFmpeg transcoding is enabled; extension-wide cross-origin isolation no longer prevents the offscreen recorder from consuming the tab stream.
 - FFmpeg WebM-to-MP4 conversion avoids pthread deadlocks and VP9 decoder `Resource temporarily unavailable` failures by preloading a larger worker pool and constraining decoder threads.

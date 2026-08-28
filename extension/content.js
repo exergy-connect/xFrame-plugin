@@ -16,7 +16,6 @@
   let pausedAt = 0;
   let isPaused = false;
   let pointerEl = null;
-  let onPointerMove = null;
   let onSessionKeyDown = null;
   let sessionBusy = false;
   let sessionStopping = false;
@@ -25,6 +24,7 @@
   let sessionActive = false;
   let sessionOptions = null;
   let guardTimerId = null;
+  let topLayerObserver = null;
   let remountScheduled = false;
   let regionCleanup = null;
   let snapshotActive = false;
@@ -252,6 +252,29 @@
     if (host.parentElement !== parent) {
       parent.appendChild(host);
     }
+    promotePointerToTopLayer({ restack: false });
+  }
+
+  function promotePointerToTopLayer({ restack = false } = {}) {
+    const el = pointerEl;
+    if (!el?.isConnected || typeof el.showPopover !== "function") return;
+    try {
+      if (el.getAttribute("popover") !== "manual") {
+        el.setAttribute("popover", "manual");
+      }
+      if (typeof document.getTopLayerElements === "function") {
+        const stack = document.getTopLayerElements();
+        if (stack[stack.length - 1] === el) return;
+      } else if (!restack && el.matches(":popover-open")) {
+        return;
+      }
+      if (el.matches(":popover-open")) {
+        el.hidePopover();
+      }
+      el.showPopover();
+    } catch (_error) {
+      // Popover API can reject while the document is navigating or fullscreening.
+    }
   }
 
   function clearShadowContent() {
@@ -259,6 +282,31 @@
     for (const node of [...shadowRoot.childNodes]) {
       if (node.nodeName === "STYLE") continue;
       node.remove();
+    }
+  }
+
+  function onTopLayerMayHaveChanged(event) {
+    if ((!sessionActive && !snapshotActive && !outroActive) || !hostEl) return;
+    if (event?.target === pointerEl) return;
+    if (hostEl.isConnected) placeHost(hostEl);
+    promotePointerToTopLayer({ restack: true });
+  }
+
+  function onCapturePointerMove(event) {
+    if (pointerEl) {
+      pointerEl.style.transform = `translate(${event.clientX}px, ${event.clientY}px)`;
+      pointerEl.classList.add("is-visible");
+    }
+    if (
+      !pointerEl ||
+      typeof document.getTopLayerElements !== "function" ||
+      (!sessionActive && !snapshotActive && !outroActive)
+    ) {
+      return;
+    }
+    const stack = document.getTopLayerElements();
+    if (stack[stack.length - 1] !== pointerEl) {
+      promotePointerToTopLayer({ restack: true });
     }
   }
 
@@ -274,12 +322,34 @@
       }
       if (sessionActive) scheduleRemount();
     }, 1000);
+    document.addEventListener("pointermove", onCapturePointerMove, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("toggle", onTopLayerMayHaveChanged, true);
+    document.addEventListener("close", onTopLayerMayHaveChanged, true);
+    topLayerObserver = new MutationObserver((mutations) => {
+      if (mutations.every((mutation) => mutation.target === pointerEl)) return;
+      onTopLayerMayHaveChanged();
+    });
+    topLayerObserver.observe(document.documentElement, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["open", "popover"],
+    });
   }
 
   function stopDomGuard() {
     if (guardTimerId != null) {
       window.clearInterval(guardTimerId);
       guardTimerId = null;
+    }
+    document.removeEventListener("pointermove", onCapturePointerMove, true);
+    document.removeEventListener("toggle", onTopLayerMayHaveChanged, true);
+    document.removeEventListener("close", onTopLayerMayHaveChanged, true);
+    if (topLayerObserver) {
+      topLayerObserver.disconnect();
+      topLayerObserver = null;
     }
   }
 
@@ -1017,6 +1087,7 @@
     pointerEl = document.createElement("div");
     pointerEl.className = "frameit-pointer";
     pointerEl.setAttribute("aria-hidden", "true");
+    pointerEl.setAttribute("popover", "manual");
     pointerEl.innerHTML = `
       <svg viewBox="0 0 24 24" width="24" height="24">
         <path
@@ -1029,20 +1100,16 @@
       </svg>
     `;
     root.appendChild(pointerEl);
-
-    onPointerMove = (event) => {
-      pointerEl.style.transform = `translate(${event.clientX}px, ${event.clientY}px)`;
-      pointerEl.classList.add("is-visible");
-    };
-    window.addEventListener("mousemove", onPointerMove, { passive: true });
+    promotePointerToTopLayer({ restack: true });
   }
 
   function stopPointer() {
-    if (onPointerMove) {
-      window.removeEventListener("mousemove", onPointerMove);
-      onPointerMove = null;
-    }
     if (pointerEl) {
+      try {
+        if (pointerEl.matches?.(":popover-open")) pointerEl.hidePopover();
+      } catch (_error) {
+        // Element may already be detached.
+      }
       pointerEl.remove();
       pointerEl = null;
     }
