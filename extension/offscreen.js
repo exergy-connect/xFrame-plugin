@@ -35,6 +35,7 @@ const OFFSCREEN_ONLY_TYPES = new Set([
   "frameit-start-recording",
   "frameit-pause-recording",
   "frameit-resume-recording",
+  "frameit-fade-soundtrack",
   "frameit-stop-recording",
   "frameit-discard",
 ]);
@@ -46,6 +47,7 @@ let captureStream = null;
 let tabCaptureStream = null;
 let microphoneStream = null;
 let audioContext = null;
+let recordingDestination = null;
 let mediaRecorder = null;
 let recordedChunks = [];
 let activeMimeType = "";
@@ -54,6 +56,12 @@ let includeVideo = true;
 let preferLinkedIn = false;
 let videoBitsPerSecond = DEFAULT_VIDEO_BITS;
 let audioBitsPerSecond = DEFAULT_AUDIO_BITS;
+let soundtrackBuffer = null;
+let soundtrackGain = null;
+let soundtrackSource = null;
+let soundtrackLoop = false;
+let soundtrackOffset = 0;
+let soundtrackStartedAt = 0;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
@@ -80,6 +88,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       includeAudio: message.includeAudio !== false,
       includeVideo: message.includeVideo !== false,
       includeMicrophone: Boolean(message.includeMicrophone),
+      includeSoundtrack: Boolean(message.includeSoundtrack),
+      soundtrackLoop: Boolean(message.soundtrackLoop),
     })
       .then(() => sendResponse({ ok: true }))
       .catch((error) =>
@@ -114,6 +124,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "frameit-resume-recording") {
     try {
       resumeRecording();
+      sendResponse({ ok: true });
+    } catch (error) {
+      sendResponse({ ok: false, error: String(error?.message || error) });
+    }
+    return false;
+  }
+
+  if (message.type === "frameit-fade-soundtrack") {
+    try {
+      fadeSoundtrackPlayback(message.durationSec);
       sendResponse({ ok: true });
     } catch (error) {
       sendResponse({ ok: false, error: String(error?.message || error) });
@@ -165,6 +185,8 @@ async function acquireStream(
     includeAudio: wantAudio = true,
     includeVideo: wantVideo = true,
     includeMicrophone = false,
+    includeSoundtrack = false,
+    soundtrackLoop: loopSoundtrack = false,
   } = {}
 ) {
   cleanup();
@@ -173,7 +195,8 @@ async function acquireStream(
     captureMode === "video" ? false : captureMode === "audio" ? true : Boolean(wantAudio);
   includeVideo =
     captureMode === "audio" ? false : captureMode === "video" ? true : wantVideo !== false;
-  includeAudio = includeTabAudio || Boolean(includeMicrophone);
+  includeAudio = includeTabAudio || Boolean(includeMicrophone) || Boolean(includeSoundtrack);
+  soundtrackLoop = Boolean(loopSoundtrack);
   const cursor = includePointer ? "always" : "never";
 
   async function openStream(withAudio) {
@@ -264,9 +287,27 @@ async function acquireStream(
     }
   }
 
-  if (hasTabAudio || hasMicrophoneAudio) {
-    audioContext = new AudioContext();
-    const recordingDestination = audioContext.createMediaStreamDestination();
+  if (includeSoundtrack) {
+    const blob = await getSoundtrackAudio();
+    if (!blob) {
+      cleanup();
+      throw new Error("Choose a soundtrack, or turn off the soundtrack.");
+    }
+    try {
+      audioContext = new AudioContext();
+      const buffer = await blob.arrayBuffer();
+      soundtrackBuffer = await audioContext.decodeAudioData(buffer.slice(0));
+    } catch (error) {
+      cleanup();
+      throw new Error(
+        `Could not decode soundtrack: ${String(error?.message || error)}.`
+      );
+    }
+  }
+
+  if (hasTabAudio || hasMicrophoneAudio || soundtrackBuffer) {
+    if (!audioContext) audioContext = new AudioContext();
+    recordingDestination = audioContext.createMediaStreamDestination();
 
     if (hasTabAudio) {
       const tabSource = audioContext.createMediaStreamSource(tabCaptureStream);
@@ -276,6 +317,12 @@ async function acquireStream(
     if (hasMicrophoneAudio) {
       const microphoneSource = audioContext.createMediaStreamSource(microphoneStream);
       microphoneSource.connect(recordingDestination);
+    }
+    if (soundtrackBuffer) {
+      soundtrackGain = audioContext.createGain();
+      soundtrackGain.gain.value = 1;
+      soundtrackGain.connect(recordingDestination);
+      soundtrackGain.connect(audioContext.destination);
     }
 
     captureStream = new MediaStream([
@@ -565,7 +612,16 @@ async function startRecording({
     }
   };
 
+  if (audioContext?.state === "suspended") {
+    try {
+      await audioContext.resume();
+    } catch (_error) {
+      // Soundtrack may still start if the context is already allowed.
+    }
+  }
+
   mediaRecorder.start(1000);
+  startSoundtrackPlayback();
   return activeMimeType;
 }
 
@@ -573,6 +629,7 @@ function pauseRecording() {
   if (!mediaRecorder || mediaRecorder.state !== "recording") {
     throw new Error("Recorder is not recording");
   }
+  pauseSoundtrackPlayback();
   mediaRecorder.pause();
 }
 
@@ -581,6 +638,7 @@ function resumeRecording() {
     throw new Error("Recorder is not paused");
   }
   mediaRecorder.resume();
+  resumeSoundtrackPlayback();
 }
 
 async function stopRecording(filename, durationSec) {
@@ -592,6 +650,7 @@ async function stopRecording(filename, durationSec) {
   }
 
   const mimeType = activeMimeType || mediaRecorder.mimeType || defaultRecorderMime();
+  stopSoundtrackPlayback();
 
   await new Promise((resolve, reject) => {
     mediaRecorder.onstop = () => resolve();
@@ -727,6 +786,93 @@ function defaultRecorderMime() {
   return includeVideo ? "video/webm" : "audio/webm";
 }
 
+function startSoundtrackPlayback() {
+  if (!soundtrackBuffer || !audioContext || !soundtrackGain) return;
+  resetSoundtrackGain(1);
+  soundtrackOffset = 0;
+  playSoundtrackFrom(0);
+}
+
+function fadeSoundtrackPlayback(durationSec) {
+  if (!soundtrackGain || !audioContext) return;
+  const duration = Math.max(0, Number(durationSec) || 0);
+  const now = audioContext.currentTime;
+  const param = soundtrackGain.gain;
+  param.cancelScheduledValues(now);
+  const current = Number.isFinite(param.value) ? Math.max(param.value, 0) : 1;
+  param.setValueAtTime(Math.max(current, 0.0001), now);
+  if (duration <= 0.02) {
+    param.setValueAtTime(0, now);
+    return;
+  }
+  param.exponentialRampToValueAtTime(0.001, now + duration);
+  param.setValueAtTime(0, now + duration);
+}
+
+function resetSoundtrackGain(value) {
+  if (!soundtrackGain || !audioContext) return;
+  const now = audioContext.currentTime;
+  const param = soundtrackGain.gain;
+  param.cancelScheduledValues(now);
+  param.setValueAtTime(value, now);
+}
+
+function pauseSoundtrackPlayback() {
+  if (!soundtrackSource || !audioContext) return;
+  const elapsed = Math.max(0, audioContext.currentTime - soundtrackStartedAt);
+  soundtrackOffset += elapsed;
+  if (soundtrackLoop && soundtrackBuffer?.duration) {
+    soundtrackOffset %= soundtrackBuffer.duration;
+  } else if (soundtrackBuffer?.duration) {
+    soundtrackOffset = Math.min(soundtrackOffset, soundtrackBuffer.duration);
+  }
+  stopSoundtrackSource();
+}
+
+function resumeSoundtrackPlayback() {
+  if (!soundtrackBuffer || !audioContext || !soundtrackGain) return;
+  playSoundtrackFrom(soundtrackOffset);
+  if (audioContext.state === "suspended") {
+    audioContext.resume().catch(() => {});
+  }
+}
+
+function playSoundtrackFrom(offset) {
+  stopSoundtrackSource();
+  if (!soundtrackBuffer || !audioContext || !soundtrackGain) return;
+  const duration = soundtrackBuffer.duration || 0;
+  const startOffset = duration > 0 ? Math.max(0, Math.min(offset, duration)) : 0;
+  if (!soundtrackLoop && duration > 0 && startOffset >= duration) return;
+
+  soundtrackSource = audioContext.createBufferSource();
+  soundtrackSource.buffer = soundtrackBuffer;
+  soundtrackSource.loop = soundtrackLoop;
+  soundtrackSource.connect(soundtrackGain);
+  soundtrackStartedAt = audioContext.currentTime;
+  soundtrackSource.start(0, startOffset);
+}
+
+function stopSoundtrackPlayback() {
+  stopSoundtrackSource();
+  soundtrackOffset = 0;
+  soundtrackStartedAt = 0;
+}
+
+function stopSoundtrackSource() {
+  if (!soundtrackSource) return;
+  try {
+    soundtrackSource.stop();
+  } catch (_error) {
+    // Already stopped.
+  }
+  try {
+    soundtrackSource.disconnect();
+  } catch (_error) {
+    // ignore
+  }
+  soundtrackSource = null;
+}
+
 function replaceFilenameExtension(filename, extension) {
   const suffixIndex = filename.lastIndexOf(".");
   if (suffixIndex <= 0) return `${filename}${extension}`;
@@ -749,6 +895,18 @@ function cleanup() {
   preferLinkedIn = false;
   videoBitsPerSecond = DEFAULT_VIDEO_BITS;
   audioBitsPerSecond = DEFAULT_AUDIO_BITS;
+  stopSoundtrackPlayback();
+  soundtrackBuffer = null;
+  soundtrackLoop = false;
+  if (soundtrackGain) {
+    try {
+      soundtrackGain.disconnect();
+    } catch (_error) {
+      // ignore
+    }
+    soundtrackGain = null;
+  }
+  recordingDestination = null;
 
   if (captureStream) {
     for (const track of captureStream.getTracks()) {

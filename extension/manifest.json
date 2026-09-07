@@ -1,16 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Exergy ∞ xFrame",
-  "version": "1.3.0",
-  "description": "Exergy ∞ xFrame records a web session as MP4, takes PNG snapshots, and creates animated GIFs from recordings.",
+  "name": "Exergy \u221e xFrame",
+  "version": "1.4.0",
+  "description": "Exergy \u221e xFrame records a web session as MP4, takes PNG snapshots, and creates animated GIFs from recordings.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "Exergy ∞ xFrame",
-    "default_popup": "popup.html",
+    "default_title": "Exergy \u221e xFrame",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -35,9 +34,12 @@
     "downloads",
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "sidePanel"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
@@ -49,7 +51,12 @@
         "assets/favicon.ico",
         "assets/exergy_connect_logo.png"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
-  ]
+  ],
+  "side_panel": {
+    "default_path": "popup.html"
+  }
 }

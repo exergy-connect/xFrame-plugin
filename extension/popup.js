@@ -5,7 +5,12 @@ const OUTRO_DURATION_KEY = "outroDurationSec";
 const OUTRO_STORAGE_KEY = "outroImageDataUrl"; // legacy data-URL key, migrated to IndexedDB
 const INCLUDE_AUDIO_KEY = "includeAudio"; // legacy boolean, migrated to captureMode
 const CAPTURE_MODE_KEY = "captureMode";
+const INCLUDE_POINTER_KEY = "includePointer";
 const INCLUDE_MICROPHONE_KEY = "includeMicrophone";
+const INCLUDE_SOUNDTRACK_KEY = "includeSoundtrack";
+const SOUNDTRACK_LOOP_KEY = "soundtrackLoop";
+const SOUNDTRACK_NAME_KEY = "soundtrackFileName";
+const MAX_SOUNDTRACK_BYTES = 50_000_000;
 const CAPTURE_MODES = ["audio-video", "video", "audio"];
 const DEFAULT_CAPTURE_MODE = "audio-video";
 const VIDEO_QUALITY_KEY = "videoQuality";
@@ -56,6 +61,14 @@ const hideControlsEl = document.getElementById("hideControls");
 const includePointerEl = document.getElementById("includePointer");
 const captureModeEl = document.getElementById("captureMode");
 const includeMicrophoneEl = document.getElementById("includeMicrophone");
+const includeSoundtrackEl = document.getElementById("includeSoundtrack");
+const soundtrackOptionsEl = document.getElementById("soundtrackOptions");
+const soundtrackMarkEl = document.getElementById("soundtrackMark");
+const soundtrackNameEl = document.getElementById("soundtrackName");
+const soundtrackFileEl = document.getElementById("soundtrackFile");
+const chooseSoundtrackBtn = document.getElementById("chooseSoundtrack");
+const resetSoundtrackBtn = document.getElementById("resetSoundtrack");
+const soundtrackLoopEl = document.getElementById("soundtrackLoop");
 const videoLinkedInEl = document.getElementById("videoLinkedIn");
 const videoQualityEl = document.getElementById("videoQuality");
 const videoQualityLinkedInOption = videoQualityEl.querySelector(
@@ -78,7 +91,7 @@ const gifSpiralflowEl = document.getElementById("gifSpiralflow");
 
 const HINTS = {
   record:
-    "3-second countdown, then recording begins. Reopen to pause, stop, or cancel.",
+    "3-second countdown, then recording begins. Pause, stop, or cancel here.",
   snapshot: "Shortcut: Alt+Shift+S (chrome://extensions/shortcuts).",
   animate:
     "Converts the last Stop & save recording into an animated GIF.",
@@ -90,14 +103,17 @@ let gifPollId = null;
 let statusSnapshot = null;
 let customLogoDataUrl = null;
 let hasOutroImage = false;
+let hasSoundtrackAudio = false;
 let outroPreviewUrl = null;
 let activeTab = "record";
 let uiBusy = false;
 let lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
 let hasSavedRecording = false;
+let captureInProgress = false;
 
 initLogoSettings();
 initOutroSettings();
+initSoundtrackSettings();
 initRecordingSettings();
 initSnapshotSettings();
 initAnimateSettings();
@@ -105,6 +121,10 @@ setCaptureTab("record");
 lockPanelsHeight();
 refreshStatus();
 requestAnimationFrame(() => lockPanelsHeight());
+window.addEventListener("resize", lockPanelsHeight);
+window.setInterval(() => {
+  if (captureInProgress) refreshStatus();
+}, 1000);
 
 tabRecordEl.addEventListener("click", () => setCaptureTab("record"));
 tabSnapshotEl.addEventListener("click", () => setCaptureTab("snapshot"));
@@ -121,7 +141,14 @@ includeOutroEl.addEventListener("change", () => {
 });
 outroDurationEl.addEventListener("change", persistRecordingSettings);
 captureModeEl.addEventListener("change", persistRecordingSettings);
+includePointerEl.addEventListener("change", persistRecordingSettings);
 includeMicrophoneEl.addEventListener("change", persistRecordingSettings);
+includeSoundtrackEl.addEventListener("change", () => {
+  syncSoundtrackOptionsVisibility();
+  persistRecordingSettings();
+  lockPanelsHeight();
+});
+soundtrackLoopEl.addEventListener("change", persistRecordingSettings);
 videoLinkedInEl.addEventListener("change", () => {
   syncVideoLinkedInUi();
   persistRecordingSettings();
@@ -185,6 +212,55 @@ resetOutroBtn.addEventListener("click", async () => {
   setStatus("Outro image removed.");
 });
 
+chooseSoundtrackBtn.addEventListener("click", () => {
+  soundtrackFileEl.value = "";
+  soundtrackFileEl.click();
+});
+
+soundtrackFileEl.addEventListener("change", async () => {
+  const file = soundtrackFileEl.files?.[0];
+  if (!file) return;
+  setOptionsDisabled(true);
+  startBtn.disabled = true;
+  try {
+    if (file.type && !file.type.startsWith("audio/") && file.type !== "video/webm") {
+      throw new Error("Please choose an audio file.");
+    }
+    if (file.size > MAX_SOUNDTRACK_BYTES) {
+      throw new Error("Soundtrack must be 50 MB or smaller.");
+    }
+    setStatus("Saving soundtrack…");
+    await putSoundtrackAudio(file);
+    await chrome.storage.local.set({ [SOUNDTRACK_NAME_KEY]: file.name });
+    hasSoundtrackAudio = true;
+    applySoundtrackPreview(file.name);
+    lockPanelsHeight();
+    setStatus("Soundtrack saved.");
+  } catch (error) {
+    setStatus(String(error?.message || error), true);
+  } finally {
+    setOptionsDisabled(false);
+    startBtn.disabled = false;
+  }
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes[SOUNDTRACK_NAME_KEY]) return;
+  const fileName = changes[SOUNDTRACK_NAME_KEY].newValue;
+  hasSoundtrackAudio = Boolean(fileName);
+  applySoundtrackPreview(fileName || null);
+  lockPanelsHeight();
+});
+
+resetSoundtrackBtn.addEventListener("click", async () => {
+  hasSoundtrackAudio = false;
+  await clearSoundtrackAudio();
+  await chrome.storage.local.remove(SOUNDTRACK_NAME_KEY);
+  applySoundtrackPreview(null);
+  lockPanelsHeight();
+  setStatus("Soundtrack removed.");
+});
+
 outroFileEl.addEventListener("change", async () => {
   const file = outroFileEl.files?.[0];
   outroFileEl.value = "";
@@ -238,6 +314,9 @@ startBtn.addEventListener("click", async () => {
     if (includeOutroEl.checked && !hasOutroImage) {
       throw new Error("Choose an outro image, or turn off the outro.");
     }
+    if (includeSoundtrackEl.checked && !hasSoundtrackAudio) {
+      throw new Error("Choose a soundtrack, or turn off the soundtrack.");
+    }
     const result = await chrome.runtime.sendMessage({
       type: "frameit-start-session",
       includeLogo: includeLogoEl.checked,
@@ -248,13 +327,15 @@ startBtn.addEventListener("click", async () => {
       includePointer: includePointerEl.checked,
       captureMode: selectedCaptureMode(),
       includeMicrophone: includeMicrophoneEl.checked,
+      includeSoundtrack: includeSoundtrackEl.checked,
+      soundtrackLoop: soundtrackLoopEl.checked,
       videoQuality: selectedVideoQuality(),
     });
     if (!result?.ok) {
       throw new Error(result?.error || "Could not start session");
     }
     setStatus("Countdown running on the tab.");
-    window.close();
+    await refreshStatus();
   } catch (error) {
     setStatus(String(error?.message || error), true);
     startBtn.disabled = false;
@@ -310,7 +391,7 @@ snapshotBtn.addEventListener("click", async () => {
           ? "Select a region on the tab."
           : "Capturing snapshot…"
     );
-    window.close();
+    await refreshStatus();
   } catch (error) {
     setStatus(String(error?.message || error), true);
     snapshotBtn.disabled = false;
@@ -381,6 +462,8 @@ stopBtn.addEventListener("click", async () => {
   try {
     if (statusSnapshot?.includeOutro) {
       setStatus("Showing outro…");
+    } else if (statusSnapshot?.includeSoundtrack) {
+      setStatus("Fading soundtrack…");
     }
     const result = await chrome.runtime.sendMessage({
       type: "frameit-stop-session",
@@ -485,6 +568,35 @@ async function initOutroSettings() {
   lockPanelsHeight();
 }
 
+async function initSoundtrackSettings() {
+  try {
+    const stored = await chrome.storage.local.get([
+      INCLUDE_SOUNDTRACK_KEY,
+      SOUNDTRACK_LOOP_KEY,
+      SOUNDTRACK_NAME_KEY,
+    ]);
+    includeSoundtrackEl.checked = stored?.[INCLUDE_SOUNDTRACK_KEY] === true;
+    soundtrackLoopEl.checked = stored?.[SOUNDTRACK_LOOP_KEY] === true;
+    const blob = await getSoundtrackAudio();
+    hasSoundtrackAudio = Boolean(blob && blob.size > 0);
+    const storedName =
+      typeof stored?.[SOUNDTRACK_NAME_KEY] === "string"
+        ? stored[SOUNDTRACK_NAME_KEY]
+        : "";
+    applySoundtrackPreview(hasSoundtrackAudio ? storedName || "Soundtrack" : null);
+    if (!hasSoundtrackAudio && storedName) {
+      await chrome.storage.local.remove(SOUNDTRACK_NAME_KEY);
+    }
+  } catch (_error) {
+    includeSoundtrackEl.checked = false;
+    soundtrackLoopEl.checked = false;
+    hasSoundtrackAudio = false;
+    applySoundtrackPreview(null);
+  }
+  syncSoundtrackOptionsVisibility();
+  lockPanelsHeight();
+}
+
 function dataUrlToBlob(dataUrl) {
   return fetch(dataUrl).then((response) => response.blob());
 }
@@ -494,11 +606,13 @@ async function initRecordingSettings() {
     const stored = await chrome.storage.local.get([
       CAPTURE_MODE_KEY,
       INCLUDE_AUDIO_KEY,
+      INCLUDE_POINTER_KEY,
       INCLUDE_MICROPHONE_KEY,
       VIDEO_QUALITY_KEY,
       VIDEO_LINKEDIN_KEY,
     ]);
     captureModeEl.value = captureModeFromStored(stored);
+    includePointerEl.checked = stored?.[INCLUDE_POINTER_KEY] === true;
     includeMicrophoneEl.checked = stored?.[INCLUDE_MICROPHONE_KEY] === true;
     const storedQuality = normalizeVideoQuality(stored?.[VIDEO_QUALITY_KEY]);
     const linkedIn =
@@ -509,6 +623,7 @@ async function initRecordingSettings() {
     syncVideoLinkedInUi();
   } catch (_error) {
     captureModeEl.value = DEFAULT_CAPTURE_MODE;
+    includePointerEl.checked = false;
     includeMicrophoneEl.checked = false;
     videoLinkedInEl.checked = false;
     lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
@@ -519,8 +634,11 @@ async function initRecordingSettings() {
 async function persistRecordingSettings() {
   await chrome.storage.local.set({
     [CAPTURE_MODE_KEY]: selectedCaptureMode(),
+    [INCLUDE_POINTER_KEY]: includePointerEl.checked,
     [INCLUDE_AUDIO_KEY]: selectedCaptureMode() !== "video",
     [INCLUDE_MICROPHONE_KEY]: includeMicrophoneEl.checked,
+    [INCLUDE_SOUNDTRACK_KEY]: includeSoundtrackEl.checked,
+    [SOUNDTRACK_LOOP_KEY]: soundtrackLoopEl.checked,
     [VIDEO_LINKEDIN_KEY]: videoLinkedInEl.checked,
     [VIDEO_QUALITY_KEY]: selectedVideoQuality(),
     [INCLUDE_OUTRO_KEY]: includeOutroEl.checked,
@@ -719,6 +837,17 @@ function syncOutroOptionsVisibility() {
   outroOptionsEl.classList.toggle("is-collapsed", !includeOutroEl.checked);
 }
 
+function syncSoundtrackOptionsVisibility() {
+  soundtrackOptionsEl.classList.toggle("is-collapsed", !includeSoundtrackEl.checked);
+}
+
+function applySoundtrackPreview(fileName) {
+  const hasFile = Boolean(fileName);
+  soundtrackMarkEl.classList.toggle("is-empty", !hasFile);
+  soundtrackNameEl.textContent = hasFile ? fileName : "No file chosen";
+  resetSoundtrackBtn.classList.toggle("is-slot-hidden", !hasFile);
+}
+
 function selectedOutroDuration() {
   return normalizeOutroDuration(outroDurationEl.value);
 }
@@ -820,6 +949,7 @@ async function refreshStatus() {
     const result = await chrome.runtime.sendMessage({
       type: "frameit-get-status",
     });
+    captureInProgress = Boolean(result?.active || result?.snapshotActive);
     hasSavedRecording = Boolean(result?.hasLastRecording);
     updateAnimateSource(result?.lastRecordingFilename);
 
@@ -998,6 +1128,11 @@ function setOptionsDisabled(disabled) {
   includePointerEl.disabled = disabled;
   captureModeEl.disabled = disabled;
   includeMicrophoneEl.disabled = disabled;
+  includeSoundtrackEl.disabled = disabled;
+  soundtrackLoopEl.disabled = disabled;
+  chooseSoundtrackBtn.disabled = disabled;
+  soundtrackFileEl.disabled = disabled;
+  resetSoundtrackBtn.disabled = disabled;
   videoLinkedInEl.disabled = disabled;
   chooseLogoBtn.disabled = disabled;
   resetLogoBtn.disabled = disabled;

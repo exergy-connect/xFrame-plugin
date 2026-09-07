@@ -39,10 +39,10 @@ It is the first conceptual twin.
 - Video quality presets (Efficient / Standard / High) plus **Optimize for LinkedIn** (~6 Mbps, prefer H.264/AAC MP4)
 - Optional logo watermark and end-of-video outro (centered image over a blurred background, 1–10 seconds)
 - Optional mouse pointer overlay that stays visible over page dialogs and popovers
-- Pause, stop & save, or cancel from the popup, on-page bar, or **P** / **S** / **Esc**
+- Pause, stop & save, or cancel from the side panel, on-page bar, or **P** / **S** / **Esc**
 - Snapshot the visible tab or a selected region (PNG / JPG / GIF, optional LinkedIn 1280×644)
 - Animate the last saved recording into a GIF (FPS, speed, optional spiralflow timing)
-- Record / Snapshot / Animate tabs in the toolbar popup
+- Record / Snapshot / Animate tabs in the side panel
 - Local/unpacked builds can convert LinkedIn WebM to H.264/AAC MP4 in the extension
 - No desktop recording; lightweight UI on standard browser APIs
 
@@ -75,23 +75,23 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| Include logo in recording | On | Watermark in the top-right (Exergy by default; choose a custom image in the popup) |
+| Include logo in recording | On | Watermark in the top-right (Exergy by default; choose a custom image in the side panel) |
 | Show outro after recording | Off | After Stop & save, keeps recording a blurred, centered outro image for 1–10 seconds (default 3) |
-| Hide recording controls from the video | On | Omits the on-page session bar from the recording; reopen the popup (or use keys) to pause/stop |
+| Hide recording controls from the video | On | Omits the on-page session bar from the recording; reopen the side panel (or use keys) to pause/stop |
 | Include mouse pointer in recording | Off | Draws a captureable pointer overlay; otherwise the cursor is hidden from the capture |
 | Include tab audio in recording | On | Captures tab audio with the video; turn off for silent recordings |
 | Include microphone audio in recording | Off | Captures microphone audio with the video; first use opens a setup tab where Chrome can request access |
 | Optimize for LinkedIn | Off | Selects the LinkedIn quality profile (~6 Mbps) and prefers H.264 + AAC for upload-friendly MP4 |
 | Video quality | Standard (~5 Mbps) | Efficient (~2 Mbps), Standard (~5 Mbps), or High (~8 Mbps); locked to LinkedIn when that option is on |
 
-Recording, snapshot, and animate settings live on separate popup tabs (**Record** / **Snapshot** / **Animate**) so the popup stays compact. A custom recording logo is stored in extension storage. The outro image is kept in IndexedDB so large files persist, and is reused until you remove it. Audio, quality, outro duration, and GIF preferences are remembered between sessions.
+Recording, snapshot, and animate settings live on separate side-panel tabs (**Record** / **Snapshot** / **Animate**) so the controls stay compact. Audio selection happens in the same panel, which stays open through the file picker. A custom recording logo is stored in extension storage. The outro image is kept in IndexedDB so large files persist, and is reused until you remove it. Audio, quality, outro duration, and GIF preferences are remembered between sessions.
 
 ### During a session
 
 - **P** — pause / continue
 - **S** — stop & save
 - **Esc** — cancel (discard; does not download)
-- Reopen the toolbar popup for the live timer plus Pause, Stop & save, and Cancel
+- Use the side panel for the live timer plus Pause, Stop & save, and Cancel
 - If “Hide recording controls” is off, the on-page session bar also offers pause / stop / cancel
 
 Keys are ignored while typing in inputs, textareas, or contenteditable fields.
@@ -122,9 +122,9 @@ Preferences are stored in extension storage and reused by the **Alt+Shift+S** sh
 ## Create an animated GIF
 
 1. Record a session and use **Stop & save** (Cancel does not leave a convertible recording)
-2. Open the toolbar popup → **Animate**
+2. Open the side panel → **Animate**
 3. Choose FPS (default 10), speed (10–500%, default 100%), and optional **Spiralflow**
-4. Click **Create GIF** — encoding runs in the background; reopen the popup for progress
+4. Click **Create GIF** — encoding runs in the background; reopen the side panel for progress
 
 The GIF downloads as `{same base name as the recording}.gif`. Create GIF stays disabled until a recording has been saved. Recording and snapshot are blocked while a GIF is encoding (and the reverse).
 
@@ -162,7 +162,7 @@ sequenceDiagram
   CS-->>SW: countdownDone
   SW->>OS: startRecording
   SW->>CS: showSessionBar
-  User->>CS: Stop (S / bar / popup)
+  User->>CS: Stop (S / bar / side panel)
   CS->>SW: stopSession
   opt Outro enabled
     SW->>CS: show outro overlay
@@ -179,7 +179,7 @@ sequenceDiagram
   SW->>CS: teardown overlays
 ```
 
-1. **Start** — The popup asks the service worker to begin a session on the active tab (with the chosen options).
+1. **Start** — The side panel asks the service worker to begin a session on the active tab (with the chosen options).
 2. **Acquire** — The worker obtains a `tabCapture` stream id, opens an offscreen document, and the recorder calls `getUserMedia` for the tab media source and, when selected, the microphone. An `AudioContext` mixes the chosen sources into one recording track; tab audio is also routed locally so you can still hear the page. Capture requests `cursor: never` unless “Include mouse pointer” is on, and aims for 30 fps.
 3. **Countdown** — A content overlay counts down for about three seconds.
 4. **Record** — After the overlay clears, `MediaRecorder` starts with the chosen quality bitrates (MP4 when the browser can actually record it; otherwise WebM). Tab and microphone audio are captured only when enabled. The native cursor is hidden on the page; optional logo / pointer overlays and session UI follow the start options.
@@ -187,7 +187,7 @@ sequenceDiagram
 
 ### Implementation notes
 
-- Declares `host_permissions` for `<all_urls>` so `tabCapture.getMediaStreamId` can target the active tab reliably (in addition to `activeTab` from the popup gesture).
+- Declares `host_permissions` for `<all_urls>` so `tabCapture.getMediaStreamId` can target the active tab reliably (in addition to `activeTab` from the side panel gesture).
 - LinkedIn snapshot optimization center-crops into 1280×644 after capture (and after an optional region crop). Output format can be PNG, JPG (95%), or GIF (single-frame, ≤256 colors).
 - Prefer native `MediaRecorder` MP4 (`video/mp4`). If MP4 is advertised but fails to start, or is unsupported, the extension falls back to WebM and uses a `.webm` extension.
 - Recordings move offscreen → IndexedDB → `saver.html` → `chrome.downloads` (not Base64 data URLs, and not `createObjectURL` in the service worker). The saver page revokes the temporary `blob:` URL after the download completes.

@@ -4,6 +4,7 @@ const FRAMEIT_STORE = "recordings";
 const FRAMEIT_PENDING_KEY = "pending";
 const FRAMEIT_LAST_KEY = "last";
 const FRAMEIT_OUTRO_KEY = "outro";
+const FRAMEIT_SOUNDTRACK_KEY = "soundtrack";
 
 function openRecordingDb() {
   return new Promise((resolve, reject) => {
@@ -126,6 +127,50 @@ async function clearOutroImage() {
   try {
     const tx = db.transaction(FRAMEIT_STORE, "readwrite");
     tx.objectStore(FRAMEIT_STORE).delete(FRAMEIT_OUTRO_KEY);
+    await waitForTransaction(tx);
+  } finally {
+    db.close();
+  }
+}
+
+async function putSoundtrackAudio(blob) {
+  if (!blob || !(blob instanceof Blob) || blob.size <= 0) {
+    throw new Error("Soundtrack file is empty");
+  }
+  // Read the selected file before replacing the saved audio. Keep an owned
+  // copy of its bytes rather than persisting a reference to the local file.
+  const audio = new Blob([await blob.arrayBuffer()], { type: blob.type });
+  const db = await openRecordingDb();
+  try {
+    const tx = db.transaction(FRAMEIT_STORE, "readwrite");
+    const store = tx.objectStore(FRAMEIT_STORE);
+    // Remove and replace atomically: a failed write preserves the old audio.
+    store.delete(FRAMEIT_SOUNDTRACK_KEY);
+    store.put(audio, FRAMEIT_SOUNDTRACK_KEY);
+    await waitForTransaction(tx);
+  } finally {
+    db.close();
+  }
+}
+
+async function getSoundtrackAudio() {
+  const db = await openRecordingDb();
+  try {
+    const tx = db.transaction(FRAMEIT_STORE, "readonly");
+    const blob = await idbRequest(
+      tx.objectStore(FRAMEIT_STORE).get(FRAMEIT_SOUNDTRACK_KEY)
+    );
+    return blob && blob.size > 0 ? blob : null;
+  } finally {
+    db.close();
+  }
+}
+
+async function clearSoundtrackAudio() {
+  const db = await openRecordingDb();
+  try {
+    const tx = db.transaction(FRAMEIT_STORE, "readwrite");
+    tx.objectStore(FRAMEIT_STORE).delete(FRAMEIT_SOUNDTRACK_KEY);
     await waitForTransaction(tx);
   } finally {
     db.close();

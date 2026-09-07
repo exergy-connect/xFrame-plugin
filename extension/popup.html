@@ -25,17 +25,20 @@
       html,
       body {
         margin: 0;
-        overflow: hidden;
+        overflow-x: hidden;
       }
 
       body {
-        width: 320px;
+        width: 100%;
+        min-height: 100vh;
         font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
         color: var(--text);
         background: linear-gradient(165deg, var(--bg1), var(--bg0));
       }
 
       main {
+        max-width: 440px;
+        margin: 0 auto;
         padding: 10px 12px 12px;
         display: grid;
         gap: 8px;
@@ -301,6 +304,39 @@
 
       .logo-preview.is-empty {
         visibility: hidden;
+      }
+
+      .soundtrack-mark {
+        width: 26px;
+        height: 26px;
+        border-radius: 5px;
+        background: rgba(197, 218, 240, 0.08);
+        border: 1px solid var(--line);
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1;
+      }
+
+      .soundtrack-mark.is-empty {
+        visibility: hidden;
+      }
+
+      .soundtrack-name {
+        font-size: 10px;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .soundtrack-loop {
+        align-items: center;
+        margin: 0;
+        padding: 0 4px;
+        min-width: 0;
       }
 
       .field {
@@ -569,6 +605,37 @@
               <span>Include microphone audio</span>
             </label>
 
+            <label class="option" for="includeSoundtrack">
+              <input id="includeSoundtrack" type="checkbox" />
+              <span>Include soundtrack</span>
+            </label>
+            <div id="soundtrackOptions" class="logo-options is-collapsed">
+              <div id="soundtrackMark" class="soundtrack-mark is-empty" aria-hidden="true">
+                ♪
+              </div>
+              <div class="logo-actions">
+                <button id="chooseSoundtrack" type="button" class="secondary">
+                  Choose audio file…
+                </button>
+                <div class="outro-second-row">
+                  <label class="option soundtrack-loop" for="soundtrackLoop">
+                    <input id="soundtrackLoop" type="checkbox" />
+                    <span>Loop</span>
+                  </label>
+                  <button
+                    id="resetSoundtrack"
+                    type="button"
+                    class="secondary is-slot-hidden"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div id="soundtrackName" class="soundtrack-name" aria-live="polite">No file chosen</div>
+              </div>
+              <input id="soundtrackFile" type="file"
+                accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" hidden />
+            </div>
+
             <label class="option" for="videoLinkedIn">
               <input id="videoLinkedIn" type="checkbox" />
               <span>Optimize for LinkedIn</span>
@@ -734,7 +801,7 @@
 
       <div id="status" class="status" role="status"></div>
       <p id="hint" class="hint">
-        3-second countdown, then recording begins. Reopen to pause or stop.
+        3-second countdown, then recording begins. Pause or stop here.
       </p>
     </main>
     <script src="recordingStore.js"></script>

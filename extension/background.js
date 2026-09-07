@@ -1,5 +1,16 @@
 importScripts("recordingStore.js", "gifEncode.js");
 
+// Handle the action explicitly so the toolbar gesture invokes the extension
+// on the active tab as well as opening the persistent recording controls.
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false })
+  .catch((error) => console.error("Could not configure xFrame side panel", error));
+
+chrome.action.onClicked.addListener((tab) => {
+  // Call open directly within the gesture; do not await other work first.
+  chrome.sidePanel.open({ windowId: tab.windowId })
+    .catch((error) => console.error("Could not open xFrame side panel", error));
+});
+
 const OFFSCREEN_PATH = "offscreen.html";
 const OFFSCREEN_URL = chrome.runtime.getURL(OFFSCREEN_PATH);
 const EXTENSION_ORIGIN = chrome.runtime.getURL("/");
@@ -30,6 +41,7 @@ const VIDEO_QUALITY_PRESETS = {
 };
 const DEFAULT_VIDEO_QUALITY = "standard";
 const DEFAULT_OUTRO_DURATION_SEC = 3;
+const DEFAULT_SOUNDTRACK_FADE_SEC = 3;
 const CAPTURE_MODES = ["audio-video", "video", "audio"];
 const DEFAULT_CAPTURE_MODE = "audio-video";
 
@@ -161,6 +173,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       captureMode: message.captureMode,
       includeAudio: message.includeAudio,
       includeMicrophone: Boolean(message.includeMicrophone),
+      includeSoundtrack: Boolean(message.includeSoundtrack),
+      soundtrackLoop: Boolean(message.soundtrackLoop),
       videoQuality: message.videoQuality,
     })
       .then(() => sendResponse({ ok: true }))
@@ -761,6 +775,8 @@ async function startSession({
   captureMode = DEFAULT_CAPTURE_MODE,
   includeAudio,
   includeMicrophone = false,
+  includeSoundtrack = false,
+  soundtrackLoop = false,
   videoQuality = DEFAULT_VIDEO_QUALITY,
 } = {}) {
   await ensureSessionRestored();
@@ -789,6 +805,12 @@ async function startSession({
   if (includeVideo && includeOutro && !outroDataUrl) {
     throw new Error("Choose an outro image, or turn off the outro.");
   }
+  if (includeSoundtrack) {
+    const soundtrack = await getSoundtrackAudio();
+    if (!soundtrack) {
+      throw new Error("Choose a soundtrack, or turn off the soundtrack.");
+    }
+  }
 
   session = {
     tabId: tab.id,
@@ -806,6 +828,8 @@ async function startSession({
     includeAudio: includeTabAudio,
     includeVideo,
     includeMicrophone: Boolean(includeMicrophone),
+    includeSoundtrack: Boolean(includeSoundtrack),
+    soundtrackLoop: Boolean(soundtrackLoop),
     videoQuality: qualityKey,
     preferLinkedIn: includeVideo && qualityKey === "linkedin",
     videoBitsPerSecond: bitrates.videoBitsPerSecond,
@@ -818,9 +842,7 @@ async function startSession({
   await persistSession();
 
   try {
-    const streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tab.id,
-    });
+    const streamId = await getTabCaptureStreamId(tab.id);
 
     await ensureOffscreenDocument();
     const acquired = await sendToOffscreen({
@@ -831,6 +853,8 @@ async function startSession({
       includeAudio: session.includeAudio,
       includeVideo: session.includeVideo !== false,
       includeMicrophone: session.includeMicrophone,
+      includeSoundtrack: Boolean(session.includeSoundtrack),
+      soundtrackLoop: Boolean(session.soundtrackLoop),
     });
     if (!acquired?.ok) {
       throw new Error(acquired?.error || "Failed to acquire tab stream");
@@ -846,6 +870,22 @@ async function startSession({
   }
 }
 
+async function getTabCaptureStreamId(tabId) {
+  try {
+    return await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (/has not been invoked|activeTab permission/i.test(message)) {
+      throw new Error(
+        "Click the xFrame toolbar icon on the page you want to record, then " +
+        "click Start session again. Chrome requires this after switching to " +
+        "a new page or reloading the extension."
+      );
+    }
+    throw error;
+  }
+}
+
 async function onCountdownDone() {
   await ensureSessionRestored();
   if (!session || session.phase !== "countdown") {
@@ -857,7 +897,10 @@ async function onCountdownDone() {
     videoBitsPerSecond:
       session.videoBitsPerSecond ||
       VIDEO_QUALITY_PRESETS[DEFAULT_VIDEO_QUALITY].videoBitsPerSecond,
-    audioBitsPerSecond: session.includeAudio || session.includeMicrophone
+    audioBitsPerSecond:
+      session.includeAudio ||
+      session.includeMicrophone ||
+      session.includeSoundtrack
       ? session.audioBitsPerSecond ||
         VIDEO_QUALITY_PRESETS[DEFAULT_VIDEO_QUALITY].audioBitsPerSecond
       : undefined,
@@ -938,6 +981,12 @@ async function stopSessionBody() {
   if (!session) {
     return { cancelled: true };
   }
+  if (!outroPlayed) {
+    await fadeSoundtrackIfNeeded();
+  }
+  if (!session) {
+    return { cancelled: true };
+  }
   if (
     !outroPlayed &&
     session.phase !== "recording" &&
@@ -953,6 +1002,7 @@ async function playOutroIfNeeded() {
   if (!session || session.phase === "outro") {
     if (session?.phase === "outro") {
       const remaining = Math.max(0, (session.outroEndsAt || 0) - Date.now());
+      await startSoundtrackFade(remaining / 1000);
       await waitOutroMs(remaining);
     }
     return Boolean(session);
@@ -983,8 +1033,33 @@ async function playOutroIfNeeded() {
     // Overlay may be unavailable; still hold the duration so the end is stable.
   }
 
+  await startSoundtrackFade(durationMs / 1000);
   await waitOutroMs(Math.max(0, session.outroEndsAt - Date.now()));
   return Boolean(session);
+}
+
+async function fadeSoundtrackIfNeeded() {
+  if (!session?.includeSoundtrack || session.phase !== "recording") {
+    return;
+  }
+  if (session.paused) {
+    await resumeSession();
+  }
+  if (!session || session.phase !== "recording") return;
+  await startSoundtrackFade(DEFAULT_SOUNDTRACK_FADE_SEC);
+  await waitOutroMs(DEFAULT_SOUNDTRACK_FADE_SEC * 1000);
+}
+
+async function startSoundtrackFade(durationSec) {
+  if (!session?.includeSoundtrack) return;
+  try {
+    await sendToOffscreen({
+      type: "frameit-fade-soundtrack",
+      durationSec,
+    });
+  } catch (_error) {
+    // Fade is best-effort; stop still proceeds.
+  }
 }
 
 async function finalizeStop() {
@@ -1131,6 +1206,7 @@ async function getStatus() {
     totalPausedMs: session?.totalPausedMs || 0,
     hideControls: session?.hideControls !== false,
     includeOutro: Boolean(session?.includeOutro && sessionOutroDataUrl),
+    includeSoundtrack: Boolean(session?.includeSoundtrack),
     snapshotActive: Boolean(snapshotState),
     snapshotPhase: snapshotState?.phase || null,
     hasLastRecording: hasLast,
@@ -1555,9 +1631,9 @@ async function ensureOffscreenDocument() {
   if (!(await hasOffscreenDocument())) {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_PATH,
-      reasons: ["USER_MEDIA", "BLOBS"],
+      reasons: ["USER_MEDIA", "BLOBS", "AUDIO_PLAYBACK"],
       justification:
-        "Hold the tab MediaStream and MediaRecorder for Exergy ∞ Frame sessions.",
+        "Hold the tab MediaStream and MediaRecorder, and play an optional soundtrack.",
     });
   }
 

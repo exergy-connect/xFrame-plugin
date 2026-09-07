@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-07
+
+### Added
+
+- Optional soundtrack from a saved local audio file (up to 50 MB), with looping, pause/resume support, and a fade-out during the outro or for three seconds before stopping without an outro.
+
+### Changed
+
+- Move Record, Snapshot, and Animate controls into Chrome's side panel, keeping audio selection and recording controls together and open through the file picker.
+- Keep session controls and status available after starting a recording or snapshot.
+- Extension version **1.4.0**.
+
+### Fixed
+
+- Load selected audio bytes before replacing the stored soundtrack in a single transaction, and update the displayed filename after saving.
+- Persist **Include mouse pointer** when toggled and restore it when the UI opens.
+- Open the side panel through an explicit toolbar action for page capture invocation, and explain how to restore access when Chrome reports a missing invocation.
+
 ## [1.3.0] - 2026-09-07
 
 ### Changed
