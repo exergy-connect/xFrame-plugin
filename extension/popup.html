@@ -117,15 +117,15 @@
         opacity: 0.45;
       }
 
-      /* Explicit height (set in JS) so Chrome's popup host doesn't resize on tab switch. */
+      /* Overlap panels in one grid cell; hidden panels reserve their natural height. */
       .panels {
-        position: relative;
+        display: grid;
         width: 100%;
       }
 
       .panel {
-        position: absolute;
-        inset: 0;
+        grid-area: 1 / 1;
+        min-width: 0;
         display: grid;
         gap: 7px;
         align-content: start;
@@ -361,6 +361,42 @@
         font: inherit;
         font-size: 11px;
         padding: 5px 7px;
+      }
+
+      button.dropdown-trigger {
+        width: max-content;
+        max-width: 100%;
+        justify-self: start;
+        text-align: left;
+      }
+      .dropdown-menu {
+        position: fixed;
+        inset: auto;
+        margin: 0;
+        padding: 3px;
+        width: max-content;
+        max-width: calc(100vw - 8px);
+        max-height: 240px;
+        overflow-y: auto;
+        background: var(--bg1);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        box-shadow: 0 6px 20px #0008;
+      }
+      .dropdown-menu button {
+        display: block;
+        text-align: left;
+        background: transparent;
+        color: inherit;
+        font-size: 11px;
+        padding: 7px;
+      }
+      .dropdown-menu button:hover,
+      .dropdown-menu button:focus-visible,
+      .dropdown-menu button[aria-selected="true"] {
+        background: #5a8ec444;
+        outline: 1px solid var(--accent1);
       }
 
       .status {
@@ -805,6 +841,7 @@
       </p>
     </main>
     <script src="recordingStore.js"></script>
+    <script src="dropdowns.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

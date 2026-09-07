@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Replace native outro duration, media, quality, and snapshot delay dropdowns with in-panel menus that support mouse and keyboard selection.
+- Size dropdown buttons to their selected text and menus to their options, keeping menus within the panel width.
+- Use CSS grid to size the recording panels without temporarily hiding controls for JavaScript measurements.
+
 ## [1.4.0] - 2026-09-07
 
 ### Added

@@ -40,7 +40,6 @@ const hintEl = document.getElementById("hint");
 const tabRecordEl = document.getElementById("tabRecord");
 const tabSnapshotEl = document.getElementById("tabSnapshot");
 const tabAnimateEl = document.getElementById("tabAnimate");
-const panelsEl = document.querySelector(".panels");
 const recordPanelEl = document.getElementById("recordPanel");
 const snapshotPanelEl = document.getElementById("snapshotPanel");
 const animatePanelEl = document.getElementById("animatePanel");
@@ -111,17 +110,14 @@ let lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
 let hasSavedRecording = false;
 let captureInProgress = false;
 
-initLogoSettings();
-initOutroSettings();
-initSoundtrackSettings();
-initRecordingSettings();
-initSnapshotSettings();
-initAnimateSettings();
+initLogoSettings().finally(syncDropdowns);
+initOutroSettings().finally(syncDropdowns);
+initSoundtrackSettings().finally(syncDropdowns);
+initRecordingSettings().finally(syncDropdowns);
+initSnapshotSettings().finally(syncDropdowns);
+initAnimateSettings().finally(syncDropdowns);
 setCaptureTab("record");
-lockPanelsHeight();
 refreshStatus();
-requestAnimationFrame(() => lockPanelsHeight());
-window.addEventListener("resize", lockPanelsHeight);
 window.setInterval(() => {
   if (captureInProgress) refreshStatus();
 }, 1000);
@@ -132,12 +128,10 @@ tabAnimateEl.addEventListener("click", () => setCaptureTab("animate"));
 
 includeLogoEl.addEventListener("change", () => {
   syncLogoOptionsVisibility();
-  lockPanelsHeight();
 });
 includeOutroEl.addEventListener("change", () => {
   syncOutroOptionsVisibility();
   persistRecordingSettings();
-  lockPanelsHeight();
 });
 outroDurationEl.addEventListener("change", persistRecordingSettings);
 captureModeEl.addEventListener("change", persistRecordingSettings);
@@ -146,13 +140,11 @@ includeMicrophoneEl.addEventListener("change", persistRecordingSettings);
 includeSoundtrackEl.addEventListener("change", () => {
   syncSoundtrackOptionsVisibility();
   persistRecordingSettings();
-  lockPanelsHeight();
 });
 soundtrackLoopEl.addEventListener("change", persistRecordingSettings);
 videoLinkedInEl.addEventListener("change", () => {
   syncVideoLinkedInUi();
   persistRecordingSettings();
-  lockPanelsHeight();
 });
 videoQualityEl.addEventListener("change", () => {
   if (!videoLinkedInEl.checked) {
@@ -169,7 +161,6 @@ resetLogoBtn.addEventListener("click", async () => {
   customLogoDataUrl = null;
   await chrome.storage.local.remove(LOGO_STORAGE_KEY);
   applyLogoPreview();
-  lockPanelsHeight();
   setStatus("Using the Exergy logo.");
 });
 
@@ -192,7 +183,6 @@ logoFileEl.addEventListener("change", async () => {
     customLogoDataUrl = dataUrl;
     await chrome.storage.local.set({ [LOGO_STORAGE_KEY]: dataUrl });
     applyLogoPreview();
-    lockPanelsHeight();
     setStatus("Custom logo saved.");
   } catch (error) {
     setStatus(String(error?.message || error), true);
@@ -208,7 +198,6 @@ resetOutroBtn.addEventListener("click", async () => {
   await clearOutroImage();
   await chrome.storage.local.remove(OUTRO_STORAGE_KEY);
   applyOutroPreview(null);
-  lockPanelsHeight();
   setStatus("Outro image removed.");
 });
 
@@ -234,7 +223,6 @@ soundtrackFileEl.addEventListener("change", async () => {
     await chrome.storage.local.set({ [SOUNDTRACK_NAME_KEY]: file.name });
     hasSoundtrackAudio = true;
     applySoundtrackPreview(file.name);
-    lockPanelsHeight();
     setStatus("Soundtrack saved.");
   } catch (error) {
     setStatus(String(error?.message || error), true);
@@ -249,7 +237,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   const fileName = changes[SOUNDTRACK_NAME_KEY].newValue;
   hasSoundtrackAudio = Boolean(fileName);
   applySoundtrackPreview(fileName || null);
-  lockPanelsHeight();
 });
 
 resetSoundtrackBtn.addEventListener("click", async () => {
@@ -257,7 +244,6 @@ resetSoundtrackBtn.addEventListener("click", async () => {
   await clearSoundtrackAudio();
   await chrome.storage.local.remove(SOUNDTRACK_NAME_KEY);
   applySoundtrackPreview(null);
-  lockPanelsHeight();
   setStatus("Soundtrack removed.");
 });
 
@@ -276,7 +262,6 @@ outroFileEl.addEventListener("change", async () => {
     hasOutroImage = true;
     await chrome.storage.local.remove(OUTRO_STORAGE_KEY);
     applyOutroPreview(file);
-    lockPanelsHeight();
     setStatus("Outro image saved.");
   } catch (error) {
     setStatus(String(error?.message || error), true);
@@ -565,7 +550,6 @@ async function initOutroSettings() {
     applyOutroPreview(null);
   }
   syncOutroOptionsVisibility();
-  lockPanelsHeight();
 }
 
 async function initSoundtrackSettings() {
@@ -594,7 +578,6 @@ async function initSoundtrackSettings() {
     applySoundtrackPreview(null);
   }
   syncSoundtrackOptionsVisibility();
-  lockPanelsHeight();
 }
 
 function dataUrlToBlob(dataUrl) {
@@ -695,6 +678,7 @@ function syncVideoLinkedInUi() {
       restore === "linkedin" ? DEFAULT_VIDEO_QUALITY : restore;
     videoQualityEl.disabled = uiBusy;
   }
+  syncDropdowns();
 }
 
 async function initSnapshotSettings() {
@@ -856,40 +840,6 @@ function normalizeOutroDuration(value) {
   const n = Math.round(Number(value));
   if (n === 1 || n === 2 || n === 3 || n === 5 || n === 10) return n;
   return DEFAULT_OUTRO_DURATION;
-}
-
-function lockPanelsHeight() {
-  if (!panelsEl) return;
-
-  const previousHeight = panelsEl.style.height;
-  panelsEl.style.height = "auto";
-
-  const heights = [recordPanelEl, snapshotPanelEl, animatePanelEl].map(
-    (panel) => {
-      const prev = {
-        position: panel.style.position,
-        visibility: panel.style.visibility,
-        pointerEvents: panel.style.pointerEvents,
-        inset: panel.style.inset,
-        height: panel.style.height,
-      };
-      panel.style.position = "static";
-      panel.style.visibility = "hidden";
-      panel.style.pointerEvents = "none";
-      panel.style.inset = "auto";
-      panel.style.height = "auto";
-      const height = panel.getBoundingClientRect().height;
-      panel.style.position = prev.position;
-      panel.style.visibility = prev.visibility;
-      panel.style.pointerEvents = prev.pointerEvents;
-      panel.style.inset = prev.inset;
-      panel.style.height = prev.height;
-      return height;
-    }
-  );
-
-  const next = `${Math.ceil(Math.max(0, ...heights))}px`;
-  panelsEl.style.height = next || previousHeight;
 }
 
 function setPanelActive(panelEl) {
