@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-07
+
+### Changed
+
+- Replace **Include tab audio** with a **Media** select: **Audio+video** (default), **Video only**, or **Audio only**.
+- Extension version **1.3.0**.
+
 ### Fixed
 
 - Outro overlay is shown after Stop & save even when the tab is in a fullscreen video player (exits fullscreen and promotes the overlay into the top layer).

@@ -30,6 +30,32 @@ const VIDEO_QUALITY_PRESETS = {
 };
 const DEFAULT_VIDEO_QUALITY = "standard";
 const DEFAULT_OUTRO_DURATION_SEC = 3;
+const CAPTURE_MODES = ["audio-video", "video", "audio"];
+const DEFAULT_CAPTURE_MODE = "audio-video";
+
+function normalizeCaptureMode(value, includeAudio) {
+  if (CAPTURE_MODES.includes(value)) return value;
+  if (includeAudio === false) return "video";
+  return DEFAULT_CAPTURE_MODE;
+}
+
+function captureIncludesTabAudio(mode) {
+  return mode !== "video";
+}
+
+function captureIncludesVideo(mode) {
+  return mode !== "audio";
+}
+
+function extensionFromMimeType(mimeType) {
+  const mime = (mimeType || "").toLowerCase();
+  if (mime.startsWith("audio/")) {
+    if (mime.includes("mp4")) return ".m4a";
+    if (mime.includes("ogg")) return ".ogg";
+    return ".webm";
+  }
+  return mime.includes("mp4") ? ".mp4" : ".webm";
+}
 
 function resolveVideoQuality(value) {
   const key = typeof value === "string" ? value.toLowerCase() : "";
@@ -132,7 +158,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       outroDurationSec: message.outroDurationSec,
       hideControls: message.hideControls !== false,
       includePointer: Boolean(message.includePointer),
-      includeAudio: message.includeAudio !== false,
+      captureMode: message.captureMode,
+      includeAudio: message.includeAudio,
       includeMicrophone: Boolean(message.includeMicrophone),
       videoQuality: message.videoQuality,
     })
@@ -731,7 +758,8 @@ async function startSession({
   outroDurationSec = DEFAULT_OUTRO_DURATION_SEC,
   hideControls = true,
   includePointer = false,
-  includeAudio = true,
+  captureMode = DEFAULT_CAPTURE_MODE,
+  includeAudio,
   includeMicrophone = false,
   videoQuality = DEFAULT_VIDEO_QUALITY,
 } = {}) {
@@ -754,8 +782,11 @@ async function startSession({
   const sessionStartedAt = new Date();
   const qualityKey = resolveVideoQuality(videoQuality);
   const bitrates = VIDEO_QUALITY_PRESETS[qualityKey];
-  const outroDataUrl = includeOutro ? await loadOutroDataUrl() : null;
-  if (includeOutro && !outroDataUrl) {
+  const resolvedCaptureMode = normalizeCaptureMode(captureMode, includeAudio);
+  const includeVideo = captureIncludesVideo(resolvedCaptureMode);
+  const includeTabAudio = captureIncludesTabAudio(resolvedCaptureMode);
+  const outroDataUrl = includeVideo && includeOutro ? await loadOutroDataUrl() : null;
+  if (includeVideo && includeOutro && !outroDataUrl) {
     throw new Error("Choose an outro image, or turn off the outro.");
   }
 
@@ -765,16 +796,18 @@ async function startSession({
     sessionStartedAt,
     phase: "acquiring",
     mimeType: "",
-    includeLogo: Boolean(includeLogo),
-    logoDataUrl: includeLogo ? normalizeLogoDataUrl(logoDataUrl) : null,
-    includeOutro: Boolean(includeOutro && outroDataUrl),
+    includeLogo: includeVideo && Boolean(includeLogo),
+    logoDataUrl: includeVideo && includeLogo ? normalizeLogoDataUrl(logoDataUrl) : null,
+    includeOutro: Boolean(includeVideo && includeOutro && outroDataUrl),
     outroDurationSec: resolveOutroDurationSec(outroDurationSec),
     hideControls: Boolean(hideControls),
-    includePointer: Boolean(includePointer),
-    includeAudio: includeAudio !== false,
+    includePointer: includeVideo && Boolean(includePointer),
+    captureMode: resolvedCaptureMode,
+    includeAudio: includeTabAudio,
+    includeVideo,
     includeMicrophone: Boolean(includeMicrophone),
     videoQuality: qualityKey,
-    preferLinkedIn: qualityKey === "linkedin",
+    preferLinkedIn: includeVideo && qualityKey === "linkedin",
     videoBitsPerSecond: bitrates.videoBitsPerSecond,
     audioBitsPerSecond: bitrates.audioBitsPerSecond,
     paused: false,
@@ -793,8 +826,10 @@ async function startSession({
     const acquired = await sendToOffscreen({
       type: "frameit-acquire-stream",
       streamId,
-      includePointer: Boolean(includePointer),
+      includePointer: Boolean(session.includePointer),
+      captureMode: session.captureMode,
       includeAudio: session.includeAudio,
+      includeVideo: session.includeVideo !== false,
       includeMicrophone: session.includeMicrophone,
     });
     if (!acquired?.ok) {
@@ -826,7 +861,9 @@ async function onCountdownDone() {
       ? session.audioBitsPerSecond ||
         VIDEO_QUALITY_PRESETS[DEFAULT_VIDEO_QUALITY].audioBitsPerSecond
       : undefined,
-    preferLinkedIn: Boolean(session.preferLinkedIn) || session.videoQuality === "linkedin",
+    preferLinkedIn:
+      Boolean(session.includeVideo !== false) &&
+      (Boolean(session.preferLinkedIn) || session.videoQuality === "linkedin"),
   });
   if (!started?.ok) {
     await abortSession();
@@ -957,7 +994,7 @@ async function finalizeStop() {
   }
 
   const { tabId, tabTitle, sessionStartedAt, mimeType } = session;
-  const extension = (mimeType || "").includes("mp4") ? ".mp4" : ".webm";
+  const extension = extensionFromMimeType(mimeType);
   const filename = buildFilename(tabTitle, sessionStartedAt, extension);
   const stoppedAt = Date.now();
   const currentPauseMs =
@@ -997,11 +1034,7 @@ async function finalizeStop() {
     const finalMime = stopped.mimeType || mimeType || "video/webm";
     const finalName =
       stopped.filename ||
-      buildFilename(
-        tabTitle,
-        sessionStartedAt,
-        finalMime.includes("mp4") ? ".mp4" : ".webm"
-      );
+      buildFilename(tabTitle, sessionStartedAt, extensionFromMimeType(finalMime));
 
     await downloadPendingRecording(finalName);
 

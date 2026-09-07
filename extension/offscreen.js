@@ -6,6 +6,13 @@ const MIME_CANDIDATES = [
   "video/webm",
 ];
 
+const AUDIO_MIME_CANDIDATES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4",
+  "audio/ogg;codecs=opus",
+];
+
 /** Prefer explicit H.264/AAC MP4 for LinkedIn (no generic video/mp4). */
 const LINKEDIN_NATIVE_MIME_CANDIDATES = [
   "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
@@ -43,6 +50,7 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let activeMimeType = "";
 let includeAudio = true;
+let includeVideo = true;
 let preferLinkedIn = false;
 let videoBitsPerSecond = DEFAULT_VIDEO_BITS;
 let audioBitsPerSecond = DEFAULT_AUDIO_BITS;
@@ -68,7 +76,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "frameit-acquire-stream") {
     acquireStream(message.streamId, {
       includePointer: Boolean(message.includePointer),
+      captureMode: message.captureMode,
       includeAudio: message.includeAudio !== false,
+      includeVideo: message.includeVideo !== false,
       includeMicrophone: Boolean(message.includeMicrophone),
     })
       .then(() => sendResponse({ ok: true }))
@@ -151,13 +161,18 @@ async function acquireStream(
   streamId,
   {
     includePointer = false,
+    captureMode,
     includeAudio: wantAudio = true,
+    includeVideo: wantVideo = true,
     includeMicrophone = false,
   } = {}
 ) {
   cleanup();
 
-  const includeTabAudio = Boolean(wantAudio);
+  const includeTabAudio =
+    captureMode === "video" ? false : captureMode === "audio" ? true : Boolean(wantAudio);
+  includeVideo =
+    captureMode === "audio" ? false : captureMode === "video" ? true : wantVideo !== false;
   includeAudio = includeTabAudio || Boolean(includeMicrophone);
   const cursor = includePointer ? "always" : "never";
 
@@ -211,7 +226,7 @@ async function acquireStream(
       cleanup();
       throw new Error(
         `Could not capture tab audio: ${String(error?.message || error)}. ` +
-          "Disable Include audio to record video only."
+          "Switch to Video only to record without tab audio."
       );
     }
   } else {
@@ -222,7 +237,7 @@ async function acquireStream(
   if (includeTabAudio && audioTracks.length === 0) {
     cleanup();
     throw new Error(
-      "Chrome returned a tab stream without audio. Disable Include audio to record video only."
+      "Chrome returned a tab stream without audio. Switch to Video only to record without tab audio."
     );
   }
   if (includeMicrophone) {
@@ -242,6 +257,13 @@ async function acquireStream(
 
   const hasTabAudio = includeTabAudio && audioTracks.length > 0;
   const hasMicrophoneAudio = Boolean(microphoneStream?.getAudioTracks().length);
+  const videoTracks = includeVideo ? tabCaptureStream.getVideoTracks() : [];
+  if (!includeVideo) {
+    for (const track of tabCaptureStream.getVideoTracks()) {
+      track.enabled = false;
+    }
+  }
+
   if (hasTabAudio || hasMicrophoneAudio) {
     audioContext = new AudioContext();
     const recordingDestination = audioContext.createMediaStreamDestination();
@@ -257,11 +279,13 @@ async function acquireStream(
     }
 
     captureStream = new MediaStream([
-      ...tabCaptureStream.getVideoTracks(),
+      ...videoTracks,
       ...recordingDestination.stream.getAudioTracks(),
     ]);
   } else {
-    captureStream = tabCaptureStream;
+    captureStream = videoTracks.length
+      ? new MediaStream(videoTracks)
+      : tabCaptureStream;
   }
 }
 
@@ -298,7 +322,9 @@ function normalizeBitrate(value, fallback) {
 function buildRecorderOptions(mimeType) {
   const options = {};
   if (mimeType) options.mimeType = mimeType;
-  options.videoBitsPerSecond = videoBitsPerSecond;
+  if (includeVideo) {
+    options.videoBitsPerSecond = videoBitsPerSecond;
+  }
   if (includeAudio && captureStream?.getAudioTracks?.().some((t) => t.readyState === "live")) {
     options.audioBitsPerSecond = audioBitsPerSecond;
   }
@@ -323,6 +349,13 @@ async function pickSupportedMime(stream, candidates) {
 }
 
 async function pickMimeType(stream) {
+  if (!includeVideo) {
+    const audioMime = await pickSupportedMime(stream, AUDIO_MIME_CANDIDATES);
+    if (audioMime) return audioMime;
+    await probeRecorder(stream, undefined);
+    return "";
+  }
+
   if (preferLinkedIn) {
     const nativeMp4 = await pickSupportedMime(stream, LINKEDIN_NATIVE_MIME_CANDIDATES);
     if (nativeMp4) return nativeMp4;
@@ -344,7 +377,7 @@ async function pickMimeType(stream) {
 }
 
 function needsLinkedInTranscode(mimeType) {
-  if (!preferLinkedIn || !isFfmpegTranscodingEnabled()) return false;
+  if (!includeVideo || !preferLinkedIn || !isFfmpegTranscodingEnabled()) return false;
   const mime = (mimeType || "").toLowerCase();
   return mime.includes("webm") || (!mime.includes("mp4") && !mime.includes("avc1"));
 }
@@ -524,7 +557,7 @@ async function startRecording({
     buildRecorderOptions(activeMimeType || undefined)
   );
 
-  activeMimeType = mediaRecorder.mimeType || activeMimeType || "video/webm";
+  activeMimeType = mediaRecorder.mimeType || activeMimeType || defaultRecorderMime();
 
   mediaRecorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
@@ -558,7 +591,7 @@ async function stopRecording(filename, durationSec) {
     throw new Error("Missing download filename");
   }
 
-  const mimeType = activeMimeType || mediaRecorder.mimeType || "video/webm";
+  const mimeType = activeMimeType || mediaRecorder.mimeType || defaultRecorderMime();
 
   await new Promise((resolve, reject) => {
     mediaRecorder.onstop = () => resolve();
@@ -583,8 +616,11 @@ async function stopRecording(filename, durationSec) {
   }
 
   let finalMime = mimeType;
-  let videoCodec = await detectVideoCodec(blob, mimeType);
-  let finalFilename = filename;
+  let videoCodec = includeVideo ? await detectVideoCodec(blob, mimeType) : "";
+  let finalFilename = replaceFilenameExtension(
+    filename,
+    extensionFromMimeType(mimeType)
+  );
 
   if (needsLinkedInTranscode(mimeType)) {
     reportTranscodeProgress(0.01, "Converting to MP4…");
@@ -630,7 +666,7 @@ async function stopRecording(filename, durationSec) {
     videoCodec,
     size: blob.size,
     filename: codecFilename,
-    extension: finalMime.includes("mp4") ? ".mp4" : ".webm",
+    extension: extensionFromMimeType(finalMime),
   };
 }
 
@@ -671,9 +707,24 @@ function codecFromMimeType(mimeType) {
 }
 
 function appendCodecToFilename(filename, codec) {
+  if (!codec) return filename;
   const suffixIndex = filename.lastIndexOf(".");
   if (suffixIndex <= 0) return `${filename}.${codec}`;
   return `${filename.slice(0, suffixIndex)}.${codec}${filename.slice(suffixIndex)}`;
+}
+
+function extensionFromMimeType(mimeType) {
+  const mime = (mimeType || "").toLowerCase();
+  if (mime.startsWith("audio/")) {
+    if (mime.includes("mp4")) return ".m4a";
+    if (mime.includes("ogg")) return ".ogg";
+    return ".webm";
+  }
+  return mime.includes("mp4") ? ".mp4" : ".webm";
+}
+
+function defaultRecorderMime() {
+  return includeVideo ? "video/webm" : "audio/webm";
 }
 
 function replaceFilenameExtension(filename, extension) {
@@ -694,6 +745,7 @@ function cleanup() {
   recordedChunks = [];
   activeMimeType = "";
   includeAudio = true;
+  includeVideo = true;
   preferLinkedIn = false;
   videoBitsPerSecond = DEFAULT_VIDEO_BITS;
   audioBitsPerSecond = DEFAULT_AUDIO_BITS;

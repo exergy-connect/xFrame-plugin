@@ -555,10 +555,14 @@
               <span>Include mouse pointer</span>
             </label>
 
-            <label class="option" for="includeAudio">
-              <input id="includeAudio" type="checkbox" checked />
-              <span>Include tab audio</span>
-            </label>
+            <div class="field">
+              <label class="field__label" for="captureMode">Media</label>
+              <select id="captureMode" class="select">
+                <option value="audio-video" selected>Audio+video</option>
+                <option value="video">Video only</option>
+                <option value="audio">Audio only</option>
+              </select>
+            </div>
 
             <label class="option" for="includeMicrophone">
               <input id="includeMicrophone" type="checkbox" />

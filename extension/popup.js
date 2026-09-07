@@ -3,8 +3,11 @@ const LOGO_STORAGE_KEY = "customLogoDataUrl";
 const INCLUDE_OUTRO_KEY = "includeOutro";
 const OUTRO_DURATION_KEY = "outroDurationSec";
 const OUTRO_STORAGE_KEY = "outroImageDataUrl"; // legacy data-URL key, migrated to IndexedDB
-const INCLUDE_AUDIO_KEY = "includeAudio";
+const INCLUDE_AUDIO_KEY = "includeAudio"; // legacy boolean, migrated to captureMode
+const CAPTURE_MODE_KEY = "captureMode";
 const INCLUDE_MICROPHONE_KEY = "includeMicrophone";
+const CAPTURE_MODES = ["audio-video", "video", "audio"];
+const DEFAULT_CAPTURE_MODE = "audio-video";
 const VIDEO_QUALITY_KEY = "videoQuality";
 const VIDEO_LINKEDIN_KEY = "videoLinkedIn";
 const SNAPSHOT_MODE_KEY = "snapshotMode";
@@ -51,7 +54,7 @@ const outroFileEl = document.getElementById("outroFile");
 const outroDurationEl = document.getElementById("outroDuration");
 const hideControlsEl = document.getElementById("hideControls");
 const includePointerEl = document.getElementById("includePointer");
-const includeAudioEl = document.getElementById("includeAudio");
+const captureModeEl = document.getElementById("captureMode");
 const includeMicrophoneEl = document.getElementById("includeMicrophone");
 const videoLinkedInEl = document.getElementById("videoLinkedIn");
 const videoQualityEl = document.getElementById("videoQuality");
@@ -117,7 +120,7 @@ includeOutroEl.addEventListener("change", () => {
   lockPanelsHeight();
 });
 outroDurationEl.addEventListener("change", persistRecordingSettings);
-includeAudioEl.addEventListener("change", persistRecordingSettings);
+captureModeEl.addEventListener("change", persistRecordingSettings);
 includeMicrophoneEl.addEventListener("change", persistRecordingSettings);
 videoLinkedInEl.addEventListener("change", () => {
   syncVideoLinkedInUi();
@@ -243,7 +246,7 @@ startBtn.addEventListener("click", async () => {
       outroDurationSec: selectedOutroDuration(),
       hideControls: hideControlsEl.checked,
       includePointer: includePointerEl.checked,
-      includeAudio: includeAudioEl.checked,
+      captureMode: selectedCaptureMode(),
       includeMicrophone: includeMicrophoneEl.checked,
       videoQuality: selectedVideoQuality(),
     });
@@ -489,12 +492,13 @@ function dataUrlToBlob(dataUrl) {
 async function initRecordingSettings() {
   try {
     const stored = await chrome.storage.local.get([
+      CAPTURE_MODE_KEY,
       INCLUDE_AUDIO_KEY,
       INCLUDE_MICROPHONE_KEY,
       VIDEO_QUALITY_KEY,
       VIDEO_LINKEDIN_KEY,
     ]);
-    includeAudioEl.checked = stored?.[INCLUDE_AUDIO_KEY] !== false;
+    captureModeEl.value = captureModeFromStored(stored);
     includeMicrophoneEl.checked = stored?.[INCLUDE_MICROPHONE_KEY] === true;
     const storedQuality = normalizeVideoQuality(stored?.[VIDEO_QUALITY_KEY]);
     const linkedIn =
@@ -504,7 +508,7 @@ async function initRecordingSettings() {
     videoLinkedInEl.checked = linkedIn;
     syncVideoLinkedInUi();
   } catch (_error) {
-    includeAudioEl.checked = true;
+    captureModeEl.value = DEFAULT_CAPTURE_MODE;
     includeMicrophoneEl.checked = false;
     videoLinkedInEl.checked = false;
     lastManualVideoQuality = DEFAULT_VIDEO_QUALITY;
@@ -514,13 +518,30 @@ async function initRecordingSettings() {
 
 async function persistRecordingSettings() {
   await chrome.storage.local.set({
-    [INCLUDE_AUDIO_KEY]: includeAudioEl.checked,
+    [CAPTURE_MODE_KEY]: selectedCaptureMode(),
+    [INCLUDE_AUDIO_KEY]: selectedCaptureMode() !== "video",
     [INCLUDE_MICROPHONE_KEY]: includeMicrophoneEl.checked,
     [VIDEO_LINKEDIN_KEY]: videoLinkedInEl.checked,
     [VIDEO_QUALITY_KEY]: selectedVideoQuality(),
     [INCLUDE_OUTRO_KEY]: includeOutroEl.checked,
     [OUTRO_DURATION_KEY]: selectedOutroDuration(),
   });
+}
+
+function selectedCaptureMode() {
+  return normalizeCaptureMode(captureModeEl.value);
+}
+
+function normalizeCaptureMode(value) {
+  return CAPTURE_MODES.includes(value) ? value : DEFAULT_CAPTURE_MODE;
+}
+
+function captureModeFromStored(stored) {
+  if (CAPTURE_MODES.includes(stored?.[CAPTURE_MODE_KEY])) {
+    return stored[CAPTURE_MODE_KEY];
+  }
+  if (stored?.[INCLUDE_AUDIO_KEY] === false) return "video";
+  return DEFAULT_CAPTURE_MODE;
 }
 
 function selectedVideoQuality() {
@@ -975,7 +996,7 @@ function setOptionsDisabled(disabled) {
   outroDurationEl.disabled = disabled;
   hideControlsEl.disabled = disabled;
   includePointerEl.disabled = disabled;
-  includeAudioEl.disabled = disabled;
+  captureModeEl.disabled = disabled;
   includeMicrophoneEl.disabled = disabled;
   videoLinkedInEl.disabled = disabled;
   chooseLogoBtn.disabled = disabled;
