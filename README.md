@@ -114,7 +114,7 @@ The file is saved as `{tab title} {YYYY-MM-DD HH_MM}.png` (or `.jpg` / `.gif` by
 | --- | --- | --- |
 | Capture | Visible tab | Full visible viewport, or drag to select a subsection |
 | Delay | 5 seconds | On-page countdown before capture (None / 3 / 5 / 10) |
-| Optimize for LinkedIn | Off | Center-crops and scales to LinkedIn’s 1280×644 feed size |
+| Fit in LinkedIn frame | Off | Scales the whole snapshot to fit inside LinkedIn’s 1280×644 frame without cropping |
 | Format | PNG | Output as PNG, JPG (95% quality), or GIF (256-color indexed) |
 
 Preferences are stored in extension storage and reused by the **Alt+Shift+S** shortcut. Remap the shortcut under `chrome://extensions/shortcuts`. Snapshots are blocked while a recording session is active (and the reverse).
@@ -188,7 +188,7 @@ sequenceDiagram
 ### Implementation notes
 
 - Declares `host_permissions` for `<all_urls>` so `tabCapture.getMediaStreamId` can target the active tab reliably (in addition to `activeTab` from the side panel gesture).
-- LinkedIn snapshot optimization center-crops into 1280×644 after capture (and after an optional region crop). Output format can be PNG, JPG (95%), or GIF (single-frame, ≤256 colors).
+- LinkedIn snapshot optimization fits the whole image inside 1280×644 after capture (and after an optional region crop), padding the unused space instead of cropping. Output format can be PNG, JPG (95%), or GIF (single-frame, ≤256 colors).
 - Prefer native `MediaRecorder` MP4 (`video/mp4`). If MP4 is advertised but fails to start, or is unsupported, the extension falls back to WebM and uses a `.webm` extension.
 - Recordings move offscreen → IndexedDB → `saver.html` → `chrome.downloads` (not Base64 data URLs, and not `createObjectURL` in the service worker). The saver page revokes the temporary `blob:` URL after the download completes.
 - Stop & save also keeps a **last** copy of the blob in IndexedDB (and filename metadata in extension storage) for the Animate tab; Cancel / abort clears only the pending download key.

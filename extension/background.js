@@ -574,7 +574,7 @@ async function runSnapshotCapture() {
     format: "png",
   });
   if (!dataUrl) {
-    throw new Error("Failed to capture the visible tab");
+    throw new Error("Failed to capture the tab");
   }
 
   let downloadUrl = dataUrl;
@@ -632,7 +632,8 @@ async function abortSnapshot(reason) {
 }
 
 /**
- * Fit the snapshot into LinkedIn's 1280×644 frame (center cover crop).
+ * Fit the entire snapshot inside LinkedIn's 1280×644 frame.
+ * The whole tab stays visible; extra space is padded, not cropped.
  */
 async function optimizePngForLinkedIn(dataUrl) {
   const response = await fetch(dataUrl);
@@ -640,23 +641,25 @@ async function optimizePngForLinkedIn(dataUrl) {
   const bitmap = await createImageBitmap(blob);
 
   try {
-    const scale = Math.max(
+    const scale = Math.min(
       LINKEDIN_WIDTH / bitmap.width,
       LINKEDIN_HEIGHT / bitmap.height
     );
-    const sw = LINKEDIN_WIDTH / scale;
-    const sh = LINKEDIN_HEIGHT / scale;
-    const sx = (bitmap.width - sw) / 2;
-    const sy = (bitmap.height - sh) / 2;
+    const dw = Math.max(1, Math.round(bitmap.width * scale));
+    const dh = Math.max(1, Math.round(bitmap.height * scale));
+    const dx = Math.round((LINKEDIN_WIDTH - dw) / 2);
+    const dy = Math.round((LINKEDIN_HEIGHT - dh) / 2);
 
     const canvas = new OffscreenCanvas(LINKEDIN_WIDTH, LINKEDIN_HEIGHT);
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       throw new Error("Could not optimize the snapshot for LinkedIn");
     }
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, LINKEDIN_WIDTH, LINKEDIN_HEIGHT);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, LINKEDIN_WIDTH, LINKEDIN_HEIGHT);
+    ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, dx, dy, dw, dh);
     const outBlob = await canvas.convertToBlob({ type: "image/png" });
     return blobToDataUrl(outBlob);
   } finally {

@@ -98,6 +98,7 @@ const HINTS = {
 };
 
 let timerId = null;
+let stopRequested = false;
 let gifPollId = null;
 let statusSnapshot = null;
 let customLogoDataUrl = null;
@@ -439,6 +440,7 @@ pauseBtn.addEventListener("click", async () => {
 });
 
 stopBtn.addEventListener("click", async () => {
+  stopRequested = true;
   pauseBtn.disabled = true;
   stopBtn.disabled = true;
   cancelBtn.disabled = true;
@@ -471,6 +473,8 @@ stopBtn.addEventListener("click", async () => {
     pauseBtn.disabled = false;
     stopBtn.disabled = false;
     cancelBtn.disabled = false;
+  } finally {
+    stopRequested = false;
   }
 });
 
@@ -895,10 +899,13 @@ function setTabsDisabled(disabled) {
 }
 
 async function refreshStatus() {
+  if (stopRequested) return;
   try {
     const result = await chrome.runtime.sendMessage({
       type: "frameit-get-status",
     });
+    // A poll already in flight when Stop was clicked must not restart the timer.
+    if (stopRequested) return;
     captureInProgress = Boolean(result?.active || result?.snapshotActive);
     hasSavedRecording = Boolean(result?.hasLastRecording);
     updateAnimateSource(result?.lastRecordingFilename);
@@ -960,6 +967,7 @@ function updateAnimateSource(filename) {
 }
 
 function showIdle() {
+  captureInProgress = false;
   clearTimer();
   clearGifPoll();
   uiBusy = false;
