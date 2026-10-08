@@ -84,7 +84,7 @@
     }
 
     if (message.type === "frameit-start-region-select") {
-      showRegionSelect()
+      showRegionSelect({ recording: message.recording === true })
         .then(() => sendResponse({ ok: true }))
         .catch((error) =>
           sendResponse({ ok: false, error: String(error?.message || error) })
@@ -95,6 +95,7 @@
     if (message.type === "frameit-show-outro") {
       showOutro({
         imageDataUrl: normalizeLogoDataUrl(message.imageDataUrl),
+        recordingRegion: message.recordingRegion || null,
       })
         .then(() => sendResponse({ ok: true }))
         .catch((error) =>
@@ -111,6 +112,7 @@
       showSessionBar({
         includeLogo: message.includeLogo !== false,
         logoDataUrl: normalizeLogoDataUrl(message.logoDataUrl),
+        recordingRegion: message.recordingRegion || null,
         hideControls: message.hideControls !== false,
         includePointer: Boolean(message.includePointer),
       })
@@ -512,7 +514,7 @@
     });
   }
 
-  async function showRegionSelect() {
+  async function showRegionSelect({ recording = false } = {}) {
     snapshotActive = true;
     const root = await ensureRoot();
     clearShadowContent();
@@ -611,7 +613,7 @@
       await delay(50);
       try {
         await chrome.runtime.sendMessage({
-          type: "frameit-snapshot-selection-done",
+          type: recording ? "frameit-record-selection-done" : "frameit-snapshot-selection-done",
           ...rect,
           ...viewportSize(),
         });
@@ -626,7 +628,9 @@
       clearRegionSelect();
       surface.remove();
       try {
-        await chrome.runtime.sendMessage({ type: "frameit-snapshot-cancel" });
+        await chrome.runtime.sendMessage({
+          type: recording ? "frameit-cancel-session" : "frameit-snapshot-cancel",
+        });
       } catch (_error) {
         // Snapshot may have been aborted.
       }
@@ -706,12 +710,25 @@
       .replace(/"/g, "&quot;");
   }
 
-  async function showOutro({ imageDataUrl = null } = {}) {
+  function recordingOverlayRoot(root, region) {
+    if (!region) return root;
+    let container = root.querySelector(".frameit-recording-region");
+    if (!container) {
+      container = document.createElement("div");
+      container.className = "frameit-recording-region";
+      container.style.cssText = `position:absolute;overflow:hidden;pointer-events:none;left:${100 * region.x / region.viewportWidth}%;top:${100 * region.y / region.viewportHeight}%;width:${100 * region.width / region.viewportWidth}%;height:${100 * region.height / region.viewportHeight}%;`;
+      root.appendChild(container);
+    }
+    return container;
+  }
+
+  async function showOutro({ imageDataUrl = null, recordingRegion = sessionOptions?.recordingRegion || null } = {}) {
     sessionActive = true;
     outroActive = true;
     sessionOptions = {
       ...(sessionOptions || {}),
       outroDataUrl: imageDataUrl,
+      recordingRegion,
     };
 
     // Native fullscreen video is composited above page overlays (often in a
@@ -738,7 +755,7 @@
       overlay.className = "frameit-outro";
       overlay.setAttribute("aria-hidden", "true");
       overlay.innerHTML = `<img class="frameit-outro__image" alt="" />`;
-      root.appendChild(overlay);
+      recordingOverlayRoot(root, recordingRegion).appendChild(overlay);
     }
 
     const img = overlay.querySelector(".frameit-outro__image");
@@ -776,12 +793,14 @@
   async function showSessionBar({
     includeLogo = true,
     logoDataUrl = null,
+    recordingRegion = null,
     hideControls = true,
     includePointer = false,
   } = {}) {
     sessionOptions = {
       includeLogo,
       logoDataUrl,
+      recordingRegion,
       hideControls,
       includePointer,
     };
@@ -808,7 +827,7 @@
       watermark.alt = customLogo ? "Recording logo" : "Exergy Connect";
       watermark.width = 48;
       watermark.height = 48;
-      root.appendChild(watermark);
+      recordingOverlayRoot(root, recordingRegion).appendChild(watermark);
     }
 
     if (includePointer) {
@@ -858,7 +877,7 @@
         >${ICON_CANCEL}</button>
       </div>
     `;
-    root.appendChild(bar);
+    recordingOverlayRoot(root, recordingRegion).appendChild(bar);
 
     const timeEl = bar.querySelector(".frameit-session-bar__time");
     const pauseBtn = bar.querySelector(".frameit-btn--pause");

@@ -36,11 +36,8 @@ const barEl = document.getElementById("bar");
     video.crossOrigin = "anonymous";
     // Keep in DOM so Chrome reliably decodes/seeks MediaRecorder blobs.
     document.body.appendChild(video);
-    video.src = objectUrl;
-    video.load();
-
     setUi(0.06, "Reading video metadata…");
-    await waitForVideoReady(video);
+    await loadRecordingVideo(video, objectUrl);
 
     let duration = Number(video.duration);
     if (!Number.isFinite(duration) || duration <= 0) {
@@ -216,11 +213,42 @@ function buildFrameSchedule({
   return samples;
 }
 
+async function loadRecordingVideo(video, objectUrl) {
+  try {
+    await loadVideoAttempt(video, objectUrl);
+  } catch (error) {
+    if (error?.code !== "VIDEO_METADATA_TIMEOUT") throw error;
+    // Chrome can defer media loading in a newly opened background tab.
+    // Retry visibly only when the background attempt has stalled.
+    setUi(0.06, "Retrying video loading in the GIF tab…");
+    const tab = await chrome.tabs.getCurrent();
+    if (tab?.id != null) await chrome.tabs.update(tab.id, { active: true });
+    await loadVideoAttempt(video, objectUrl);
+  }
+}
+
+async function loadVideoAttempt(video, objectUrl) {
+  // Register listeners before load/play, including synchronous cached events.
+  const ready = waitForVideoReady(video);
+  video.src = objectUrl;
+  video.load();
+  // Explicit muted playback wakes decoding when preload alone is deferred.
+  // Metadata/error events remain authoritative if autoplay is denied.
+  video.play().catch(() => {});
+  try {
+    await ready;
+  } finally {
+    video.pause();
+  }
+}
+
 function waitForVideoReady(video) {
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       cleanup();
-      reject(new Error("Timed out waiting for video metadata"));
+      const error = new Error("Timed out waiting for video metadata");
+      error.code = "VIDEO_METADATA_TIMEOUT";
+      reject(error);
     }, VIDEO_READY_TIMEOUT_MS);
 
     function cleanup() {
@@ -231,9 +259,14 @@ function waitForVideoReady(video) {
     }
 
     function onReady() {
-      if (!Number.isFinite(video.duration) && video.readyState < 1) return;
-      if (video.videoWidth <= 0) return;
+      if (video.readyState < 1) return;
       cleanup();
+      if (video.videoWidth <= 0 || video.videoHeight <= 0) {
+        reject(new Error(
+          "The saved recording has no video frames. Record with Video only or Video + audio, then create a GIF."
+        ));
+        return;
+      }
       resolve();
     }
 
@@ -249,10 +282,6 @@ function waitForVideoReady(video) {
     video.addEventListener("loadedmetadata", onReady);
     video.addEventListener("loadeddata", onReady);
     video.addEventListener("error", onError);
-
-    if (video.readyState >= 1 && video.videoWidth > 0) {
-      onReady();
-    }
   });
 }
 

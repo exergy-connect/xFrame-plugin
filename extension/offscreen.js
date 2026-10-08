@@ -32,6 +32,7 @@ const OFFSCREEN_ONLY_TYPES = new Set([
   "frameit-offscreen-ping",
   "frameit-recorder-status",
   "frameit-acquire-stream",
+  "frameit-set-recording-region",
   "frameit-start-recording",
   "frameit-pause-recording",
   "frameit-resume-recording",
@@ -44,6 +45,7 @@ const DEFAULT_VIDEO_BITS = 5_000_000;
 const DEFAULT_AUDIO_BITS = 192_000;
 
 let captureStream = null;
+let regionController = null;
 let tabCaptureStream = null;
 let microphoneStream = null;
 let audioContext = null;
@@ -95,6 +97,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) =>
         sendResponse({ ok: false, error: String(error?.message || error) })
       );
+    return true;
+  }
+
+  if (message.type === "frameit-set-recording-region") {
+    setRecordingRegion(message.selection)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
@@ -334,6 +343,22 @@ async function acquireStream(
       ? new MediaStream(videoTracks)
       : tabCaptureStream;
   }
+}
+
+async function setRecordingRegion(selection) {
+  if (!includeVideo || !captureStream?.getVideoTracks().length || mediaRecorder) {
+    throw new Error("A video stream is required before selecting a recording region");
+  }
+  if (regionController) throw new Error("A recording region is already selected");
+  const controller = new AbortController();
+  regionController = controller;
+  const source = captureStream;
+  const cropped = await createRegionRecordingStream(source, selection, controller.signal);
+  if (controller.signal.aborted || captureStream !== source) {
+    cropped.getVideoTracks().forEach((track) => track.stop());
+    throw new Error("Recording cancelled");
+  }
+  captureStream = cropped;
 }
 
 async function applyCursorConstraint(stream, cursor) {
@@ -880,6 +905,8 @@ function replaceFilenameExtension(filename, extension) {
 }
 
 function cleanup() {
+  regionController?.abort();
+  regionController = null;
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     try {
       mediaRecorder.stop();

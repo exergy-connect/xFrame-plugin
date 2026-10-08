@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Record capture controls for the visible tab or a selected region, with audio preserved and region selection before the countdown.
+
 ### Fixed
 
 - LinkedIn snapshots fit the whole visible tab inside 1280×644 instead of center-cropping it.

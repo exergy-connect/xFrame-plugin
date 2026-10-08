@@ -67,14 +67,17 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 1. Open the website tab you want to capture
 2. Click the Exergy ∞ xFrame toolbar icon
 3. Choose options, then **Start session**
-4. Watch the on-page countdown (3 → 2 → 1)
+4. If **Region** is selected, drag an area on the tab (Esc cancels), then watch the countdown (3 → 2 → 1)
 5. Work as usual; pause or stop when done
 6. The recording downloads as `{tab title} {YYYY-MM-DD HH_MM}.mp4` (or `.webm` if MP4 is unavailable)
+
+Region recordings preserve audio and place the logo, visible controls, and outro inside the selected area. The crop follows the same proportional area if the tab is resized; output dimensions remain fixed.
 
 ### Start options
 
 | Option | Default | Effect |
 | --- | --- | --- |
+| Capture | Visible tab | Choose **Region** to record a selected area; disabled for Audio only. The choice is remembered, and you select a fresh area for each session. |
 | Include logo in recording | On | Watermark in the top-right (Exergy by default; choose a custom image in the side panel) |
 | Show outro after recording | Off | After Stop & save, keeps recording a blurred, centered outro image for 1–10 seconds (default 3) |
 | Hide recording controls from the video | On | Omits the on-page session bar from the recording; reopen the side panel (or use keys) to pause/stop |
@@ -127,6 +130,8 @@ Preferences are stored in extension storage and reused by the **Alt+Shift+S** sh
 4. Click **Create GIF** — encoding runs in the background; reopen the side panel for progress
 
 The GIF downloads as `{same base name as the recording}.gif`. Create GIF stays disabled until a recording has been saved. Recording and snapshot are blocked while a GIF is encoding (and the reverse).
+
+If video loading stalls in the background, the GIF tab opens automatically to retry decoding. The saved recording must contain video frames.
 
 ### Animate options
 

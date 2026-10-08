@@ -550,6 +550,20 @@
           role="tabpanel"
           aria-labelledby="tabRecord"
         >
+          <div class="field">
+            <span class="field__label">Capture</span>
+            <div class="modes">
+              <label class="mode" for="recordModeFull">
+                <input id="recordModeFull" type="radio" name="recordMode" value="full" checked />
+                <span>Visible tab</span>
+              </label>
+              <label class="mode" for="recordModeRegion">
+                <input id="recordModeRegion" type="radio" name="recordMode" value="region" />
+                <span>Region</span>
+              </label>
+            </div>
+          </div>
+
           <div class="options">
             <label class="option" for="includeLogo">
               <input id="includeLogo" type="checkbox" checked />

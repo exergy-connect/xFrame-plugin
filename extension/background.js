@@ -92,6 +92,7 @@ const CONTENT_SESSION_TYPES = new Set([
   "frameit-resume-session",
   "frameit-snapshot-countdown-done",
   "frameit-snapshot-selection-done",
+  "frameit-record-selection-done",
   "frameit-snapshot-cancel",
 ]);
 
@@ -171,6 +172,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       hideControls: message.hideControls !== false,
       includePointer: Boolean(message.includePointer),
       captureMode: message.captureMode,
+      recordMode: message.recordMode,
       includeAudio: message.includeAudio,
       includeMicrophone: Boolean(message.includeMicrophone),
       includeSoundtrack: Boolean(message.includeSoundtrack),
@@ -225,6 +227,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse({ ok: true });
     return false;
+  }
+
+  if (message.type === "frameit-record-selection-done") {
+    if (!fromContentScript) return false;
+    onRecordSelectionDone(message, sender.tab.id)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
   }
 
   if (message.type === "frameit-snapshot-selection-done") {
@@ -386,6 +396,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!session || session.tabId !== tabId) return;
+  if (changeInfo.status === "loading" && session.phase === "selecting") {
+    abortSession().catch(() => {});
+    return;
+  }
   if (changeInfo.status === "complete" &&
       (session.phase === "recording" || session.phase === "outro")) {
     ensureSessionOverlay().catch(() => {});
@@ -776,6 +790,7 @@ async function startSession({
   hideControls = true,
   includePointer = false,
   captureMode = DEFAULT_CAPTURE_MODE,
+  recordMode = "full",
   includeAudio,
   includeMicrophone = false,
   includeSoundtrack = false,
@@ -828,6 +843,7 @@ async function startSession({
     hideControls: Boolean(hideControls),
     includePointer: includeVideo && Boolean(includePointer),
     captureMode: resolvedCaptureMode,
+    recordMode: includeVideo && recordMode === "region" ? "region" : "full",
     includeAudio: includeTabAudio,
     includeVideo,
     includeMicrophone: Boolean(includeMicrophone),
@@ -864,11 +880,37 @@ async function startSession({
     }
 
     await injectOverlay(tab.id);
-    session.phase = "countdown";
+    session.phase = session.recordMode === "region" ? "selecting" : "countdown";
     await persistSession();
-    await chrome.tabs.sendMessage(tab.id, { type: "frameit-show-countdown" });
+    await chrome.tabs.sendMessage(tab.id, session.recordMode === "region"
+      ? { type: "frameit-start-region-select", recording: true }
+      : { type: "frameit-show-countdown" });
   } catch (error) {
     await abortSession();
+    throw error;
+  }
+}
+
+async function onRecordSelectionDone(selection, tabId) {
+  await ensureSessionRestored();
+  if (!session || session.tabId !== tabId || session.phase !== "selecting") return;
+  const current = session;
+  current.phase = "acquiring";
+  await persistSession();
+  try {
+    const result = await sendToOffscreen({ type: "frameit-set-recording-region", selection });
+    // Cancel or tab removal may have ended the session while cropping started.
+    if (session !== current) return;
+    if (!result?.ok) throw new Error(result?.error || "Could not crop the recording");
+    current.recordingRegion = Object.fromEntries(
+      ["x", "y", "width", "height", "viewportWidth", "viewportHeight"]
+        .map((key) => [key, Number(selection[key])])
+    );
+    current.phase = "countdown";
+    await persistSession();
+    await chrome.tabs.sendMessage(tabId, { type: "frameit-show-countdown" });
+  } catch (error) {
+    if (session === current) await abortSession();
     throw error;
   }
 }
@@ -1031,6 +1073,7 @@ async function playOutroIfNeeded() {
     await chrome.tabs.sendMessage(session.tabId, {
       type: "frameit-show-outro",
       imageDataUrl: imageUrl,
+      recordingRegion: session.recordingRegion || null,
     });
   } catch (_error) {
     // Overlay may be unavailable; still hold the duration so the end is stable.
@@ -1493,6 +1536,7 @@ async function ensureSessionOverlay() {
       await chrome.tabs.sendMessage(session.tabId, {
         type: "frameit-show-outro",
         imageDataUrl: sessionOutroDataUrl || (await loadOutroDataUrl()),
+        recordingRegion: session.recordingRegion || null,
       });
     } catch (_error) {
       // Overlay may be unavailable on restricted pages.
@@ -1506,6 +1550,7 @@ async function ensureSessionOverlay() {
       startedAt: session.recordingStartedAt,
       includeLogo: session.includeLogo !== false,
       logoDataUrl: session.logoDataUrl || null,
+      recordingRegion: session.recordingRegion || null,
       hideControls: session.hideControls !== false,
       includePointer: Boolean(session.includePointer),
       paused: Boolean(session.paused),
@@ -1581,6 +1626,13 @@ async function restoreSession() {
     }
   } catch (_error) {
     recorder = null;
+  }
+
+  // Region selection can outlast the service worker's idle timeout. Its
+  // offscreen stream and page overlay remain available until selection/cancel.
+  if (recorder?.ok && recorder.hasStream && stored.phase === "selecting") {
+    session = stored;
+    return session;
   }
 
   // Only an actively encoding recorder is safely recoverable after SW restart.
