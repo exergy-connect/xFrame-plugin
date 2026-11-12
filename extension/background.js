@@ -59,6 +59,12 @@ function captureIncludesVideo(mode) {
   return mode !== "audio";
 }
 
+function normalizeRecordMode(recordMode, includeVideo) {
+  if (!includeVideo) return "full";
+  if (recordMode === "region" || recordMode === "screen") return recordMode;
+  return "full";
+}
+
 function extensionFromMimeType(mimeType) {
   const mime = (mimeType || "").toLowerCase();
   if (mime.startsWith("audio/")) {
@@ -819,15 +825,51 @@ async function startSession({
   const resolvedCaptureMode = normalizeCaptureMode(captureMode, includeAudio);
   const includeVideo = captureIncludesVideo(resolvedCaptureMode);
   const includeTabAudio = captureIncludesTabAudio(resolvedCaptureMode);
-  const outroDataUrl = includeVideo && includeOutro ? await loadOutroDataUrl() : null;
-  if (includeVideo && includeOutro && !outroDataUrl) {
-    throw new Error("Choose an outro image, or turn off the outro.");
-  }
-  if (includeSoundtrack) {
-    const soundtrack = await getSoundtrackAudio();
-    if (!soundtrack) {
-      throw new Error("Choose a soundtrack, or turn off the soundtrack.");
+  const resolvedRecordMode = normalizeRecordMode(recordMode, includeVideo);
+  const captureScreen = resolvedRecordMode === "screen";
+  // Open the share picker before slower outro and soundtrack reads.
+  let screenAcquireError = null;
+  const screenReady = captureScreen
+    ? acquireCaptureStream({
+        mediaSource: "display",
+        includePointer: includeVideo && Boolean(includePointer),
+        captureMode: resolvedCaptureMode,
+        includeAudio: includeTabAudio,
+        includeVideo,
+        includeMicrophone: Boolean(includeMicrophone),
+        includeSoundtrack: Boolean(includeSoundtrack),
+        soundtrackLoop: Boolean(soundtrackLoop),
+      }).catch((error) => {
+        screenAcquireError = error;
+        return null;
+      })
+    : null;
+
+  let outroDataUrl = null;
+  try {
+    outroDataUrl = includeVideo && includeOutro ? await loadOutroDataUrl() : null;
+    if (includeVideo && includeOutro && !outroDataUrl) {
+      throw new Error("Choose an outro image, or turn off the outro.");
     }
+    if (includeSoundtrack) {
+      const soundtrack = await getSoundtrackAudio();
+      if (!soundtrack) {
+        throw new Error("Choose a soundtrack, or turn off the soundtrack.");
+      }
+    }
+    if (screenReady) {
+      const acquired = await screenReady;
+      if (screenAcquireError) throw screenAcquireError;
+      if (!acquired?.ok) {
+        throw new Error(acquired?.error || "Failed to acquire the screen");
+      }
+    }
+  } catch (error) {
+    if (screenReady) {
+      await screenReady;
+      await discardCaptureStream();
+    }
+    throw error;
   }
 
   session = {
@@ -843,7 +885,7 @@ async function startSession({
     hideControls: Boolean(hideControls),
     includePointer: includeVideo && Boolean(includePointer),
     captureMode: resolvedCaptureMode,
-    recordMode: includeVideo && recordMode === "region" ? "region" : "full",
+    recordMode: resolvedRecordMode,
     includeAudio: includeTabAudio,
     includeVideo,
     includeMicrophone: Boolean(includeMicrophone),
@@ -861,22 +903,22 @@ async function startSession({
   await persistSession();
 
   try {
-    const streamId = await getTabCaptureStreamId(tab.id);
-
-    await ensureOffscreenDocument();
-    const acquired = await sendToOffscreen({
-      type: "frameit-acquire-stream",
-      streamId,
-      includePointer: Boolean(session.includePointer),
-      captureMode: session.captureMode,
-      includeAudio: session.includeAudio,
-      includeVideo: session.includeVideo !== false,
-      includeMicrophone: session.includeMicrophone,
-      includeSoundtrack: Boolean(session.includeSoundtrack),
-      soundtrackLoop: Boolean(session.soundtrackLoop),
-    });
-    if (!acquired?.ok) {
-      throw new Error(acquired?.error || "Failed to acquire tab stream");
+    if (!captureScreen) {
+      const streamId = await getTabCaptureStreamId(tab.id);
+      const acquired = await acquireCaptureStream({
+        streamId,
+        mediaSource: "tab",
+        includePointer: Boolean(session.includePointer),
+        captureMode: session.captureMode,
+        includeAudio: session.includeAudio,
+        includeVideo: session.includeVideo !== false,
+        includeMicrophone: session.includeMicrophone,
+        includeSoundtrack: Boolean(session.includeSoundtrack),
+        soundtrackLoop: Boolean(session.soundtrackLoop),
+      });
+      if (!acquired?.ok) {
+        throw new Error(acquired?.error || "Failed to acquire tab stream");
+      }
     }
 
     await injectOverlay(tab.id);
@@ -912,6 +954,35 @@ async function onRecordSelectionDone(selection, tabId) {
   } catch (error) {
     if (session === current) await abortSession();
     throw error;
+  }
+}
+
+async function acquireCaptureStream(options) {
+  await ensureOffscreenDocument(options.mediaSource === "display");
+  return sendToOffscreen({
+    type: "frameit-acquire-stream",
+    streamId: options.streamId,
+    mediaSource: options.mediaSource,
+    includePointer: Boolean(options.includePointer),
+    captureMode: options.captureMode,
+    includeAudio: options.includeAudio,
+    includeVideo: options.includeVideo !== false,
+    includeMicrophone: Boolean(options.includeMicrophone),
+    includeSoundtrack: Boolean(options.includeSoundtrack),
+    soundtrackLoop: Boolean(options.soundtrackLoop),
+  });
+}
+
+async function discardCaptureStream() {
+  try {
+    await sendToOffscreen({ type: "frameit-discard" });
+  } catch (_error) {
+    // Offscreen may not exist yet.
+  }
+  try {
+    await closeOffscreenDocument();
+  } catch (_error) {
+    // ignore
   }
 }
 
@@ -1682,14 +1753,23 @@ async function restoreSession() {
   return session;
 }
 
-async function ensureOffscreenDocument() {
+let offscreenHasDisplayMedia = false;
+
+async function ensureOffscreenDocument(displayMedia = false) {
+  if (displayMedia && !offscreenHasDisplayMedia && (await hasOffscreenDocument())) {
+    await closeOffscreenDocument();
+  }
   if (!(await hasOffscreenDocument())) {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_PATH,
-      reasons: ["USER_MEDIA", "BLOBS", "AUDIO_PLAYBACK"],
-      justification:
-        "Hold the tab MediaStream and MediaRecorder, and play an optional soundtrack.",
+      reasons: displayMedia
+        ? ["USER_MEDIA", "DISPLAY_MEDIA", "BLOBS", "AUDIO_PLAYBACK"]
+        : ["USER_MEDIA", "BLOBS", "AUDIO_PLAYBACK"],
+      justification: displayMedia
+        ? "Record a screen or window, mix audio, and store the recording."
+        : "Hold the tab MediaStream and MediaRecorder, and play an optional soundtrack.",
     });
+    offscreenHasDisplayMedia = displayMedia;
   }
 
   await waitForOffscreenReady();
@@ -1727,8 +1807,13 @@ async function waitForOffscreenReady() {
 }
 
 async function closeOffscreenDocument() {
+  offscreenHasDisplayMedia = false;
   if (await hasOffscreenDocument()) {
     await chrome.offscreen.closeDocument();
+  }
+  const deadline = Date.now() + 2000;
+  while ((await hasOffscreenDocument()) && Date.now() < deadline) {
+    await delay(50);
   }
 }
 

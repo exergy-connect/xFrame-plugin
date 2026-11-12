@@ -61,6 +61,7 @@ const hideControlsEl = document.getElementById("hideControls");
 const includePointerEl = document.getElementById("includePointer");
 const captureModeEl = document.getElementById("captureMode");
 const recordModeFullEl = document.getElementById("recordModeFull");
+const recordModeScreenEl = document.getElementById("recordModeScreen");
 const recordModeRegionEl = document.getElementById("recordModeRegion");
 const includeMicrophoneEl = document.getElementById("includeMicrophone");
 const includeSoundtrackEl = document.getElementById("includeSoundtrack");
@@ -94,6 +95,10 @@ const gifSpiralflowEl = document.getElementById("gifSpiralflow");
 const HINTS = {
   record:
     "3-second countdown, then recording begins. Pause, stop, or cancel here.",
+  screen:
+    "Chrome asks you to share an entire screen or a window. Share audio in that prompt to include system audio. The countdown on this tab is not recorded.",
+  region:
+    "Drag a region on the tab, then the countdown runs. Pause, stop, or cancel here.",
   snapshot: "Shortcut: Alt+Shift+S (chrome://extensions/shortcuts).",
   animate:
     "Converts the last Stop & save recording into an animated GIF.",
@@ -118,7 +123,7 @@ initLogoSettings().finally(syncDropdowns);
 initOutroSettings().finally(syncDropdowns);
 initSoundtrackSettings().finally(syncDropdowns);
 initRecordingSettings().finally(() => {
-  syncRecordRegionControls();
+  syncRecordModeControls();
   syncDropdowns();
 });
 initSnapshotSettings().finally(syncDropdowns);
@@ -142,11 +147,21 @@ includeOutroEl.addEventListener("change", () => {
 });
 outroDurationEl.addEventListener("change", persistRecordingSettings);
 captureModeEl.addEventListener("change", () => {
-  syncRecordRegionControls();
+  syncRecordModeControls();
   persistRecordingSettings();
 });
-recordModeFullEl.addEventListener("change", persistRecordingSettings);
-recordModeRegionEl.addEventListener("change", persistRecordingSettings);
+recordModeFullEl.addEventListener("change", () => {
+  syncRecordModeControls();
+  persistRecordingSettings();
+});
+recordModeScreenEl.addEventListener("change", () => {
+  syncRecordModeControls();
+  persistRecordingSettings();
+});
+recordModeRegionEl.addEventListener("change", () => {
+  syncRecordModeControls();
+  persistRecordingSettings();
+});
 includePointerEl.addEventListener("change", persistRecordingSettings);
 includeMicrophoneEl.addEventListener("change", persistRecordingSettings);
 includeSoundtrackEl.addEventListener("change", () => {
@@ -299,21 +314,22 @@ startBtn.addEventListener("click", async () => {
   startBtn.disabled = true;
   snapshotBtn.disabled = true;
   createGifBtn.disabled = true;
-  setStatus("Starting session…");
+  const wantsScreen = selectedRecordMode() === "screen";
+  setStatus(wantsScreen ? "Choose a screen or window…" : "Starting session…");
 
   try {
-    if (includeMicrophoneEl.checked) {
-      setStatus("Requesting microphone access…");
-      await requestMicrophoneAccess();
-      setStatus("Starting session…");
-    }
-    await persistRecordingSettings();
     if (includeOutroEl.checked && !hasOutroImage) {
       throw new Error("Choose an outro image, or turn off the outro.");
     }
     if (includeSoundtrackEl.checked && !hasSoundtrackAudio) {
       throw new Error("Choose a soundtrack, or turn off the soundtrack.");
     }
+    if (includeMicrophoneEl.checked) {
+      setStatus("Requesting microphone access…");
+      await requestMicrophoneAccess();
+      setStatus(wantsScreen ? "Choose a screen or window…" : "Starting session…");
+    }
+    await persistRecordingSettings();
     const result = await chrome.runtime.sendMessage({
       type: "frameit-start-session",
       includeLogo: includeLogoEl.checked,
@@ -323,7 +339,7 @@ startBtn.addEventListener("click", async () => {
       hideControls: hideControlsEl.checked,
       includePointer: includePointerEl.checked,
       captureMode: selectedCaptureMode(),
-      recordMode: recordModeRegionEl.checked ? "region" : "full",
+      recordMode: selectedRecordMode(),
       includeMicrophone: includeMicrophoneEl.checked,
       includeSoundtrack: includeSoundtrackEl.checked,
       soundtrackLoop: soundtrackLoopEl.checked,
@@ -332,7 +348,11 @@ startBtn.addEventListener("click", async () => {
     if (!result?.ok) {
       throw new Error(result?.error || "Could not start session");
     }
-    setStatus("Countdown running on the tab.");
+    setStatus(
+      selectedRecordMode() === "region"
+        ? "Select a region on the tab."
+        : "Countdown running on the tab."
+    );
     await refreshStatus();
   } catch (error) {
     setStatus(String(error?.message || error), true);
@@ -612,8 +632,7 @@ async function initRecordingSettings() {
       VIDEO_LINKEDIN_KEY,
     ]);
     captureModeEl.value = captureModeFromStored(stored);
-    recordModeRegionEl.checked = stored?.[RECORD_MODE_KEY] === "region";
-    recordModeFullEl.checked = !recordModeRegionEl.checked;
+    applyRecordMode(stored?.[RECORD_MODE_KEY]);
     includePointerEl.checked = stored?.[INCLUDE_POINTER_KEY] === true;
     includeMicrophoneEl.checked = stored?.[INCLUDE_MICROPHONE_KEY] === true;
     const storedQuality = normalizeVideoQuality(stored?.[VIDEO_QUALITY_KEY]);
@@ -625,7 +644,7 @@ async function initRecordingSettings() {
     syncVideoLinkedInUi();
   } catch (_error) {
     captureModeEl.value = DEFAULT_CAPTURE_MODE;
-    recordModeFullEl.checked = true;
+    applyRecordMode("full");
     includePointerEl.checked = false;
     includeMicrophoneEl.checked = false;
     videoLinkedInEl.checked = false;
@@ -634,16 +653,41 @@ async function initRecordingSettings() {
   }
 }
 
-function syncRecordRegionControls() {
+function applyRecordMode(mode) {
+  const recordMode = mode === "region" || mode === "screen" ? mode : "full";
+  recordModeFullEl.checked = recordMode === "full";
+  recordModeScreenEl.checked = recordMode === "screen";
+  recordModeRegionEl.checked = recordMode === "region";
+}
+
+function selectedRecordMode() {
+  if (selectedCaptureMode() === "audio") return "full";
+  if (recordModeScreenEl.checked) return "screen";
+  if (recordModeRegionEl.checked) return "region";
+  return "full";
+}
+
+function recordHint() {
+  const mode = selectedRecordMode();
+  if (mode === "screen") return HINTS.screen;
+  if (mode === "region") return HINTS.region;
+  return HINTS.record;
+}
+
+function syncRecordModeControls() {
   const disabled = uiBusy || selectedCaptureMode() === "audio";
   recordModeFullEl.disabled = disabled;
+  recordModeScreenEl.disabled = disabled;
   recordModeRegionEl.disabled = disabled;
+  if (!uiBusy && activeTab === "record" && !statusSnapshot) {
+    hintEl.textContent = recordHint();
+  }
 }
 
 async function persistRecordingSettings() {
   await chrome.storage.local.set({
     [CAPTURE_MODE_KEY]: selectedCaptureMode(),
-    [RECORD_MODE_KEY]: recordModeRegionEl.checked ? "region" : "full",
+    [RECORD_MODE_KEY]: selectedRecordMode(),
     [INCLUDE_POINTER_KEY]: includePointerEl.checked,
     [INCLUDE_AUDIO_KEY]: selectedCaptureMode() !== "video",
     [INCLUDE_MICROPHONE_KEY]: includeMicrophoneEl.checked,
@@ -911,7 +955,7 @@ function setCaptureTab(tab) {
   setPanelActive(panel);
 
   if (!statusSnapshot) {
-    hintEl.textContent = HINTS[activeTab];
+    hintEl.textContent = activeTab === "record" ? recordHint() : HINTS[activeTab];
   }
 }
 
@@ -1112,6 +1156,7 @@ function setOptionsDisabled(disabled) {
   includePointerEl.disabled = disabled;
   captureModeEl.disabled = disabled;
   recordModeFullEl.disabled = disabled || selectedCaptureMode() === "audio";
+  recordModeScreenEl.disabled = disabled || selectedCaptureMode() === "audio";
   recordModeRegionEl.disabled = disabled || selectedCaptureMode() === "audio";
   includeMicrophoneEl.disabled = disabled;
   includeSoundtrackEl.disabled = disabled;

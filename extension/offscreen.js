@@ -85,6 +85,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "frameit-acquire-stream") {
     acquireStream(message.streamId, {
+      mediaSource: message.mediaSource === "display" ? "display" : "tab",
       includePointer: Boolean(message.includePointer),
       captureMode: message.captureMode,
       includeAudio: message.includeAudio !== false,
@@ -189,6 +190,7 @@ function getRecorderStatus() {
 async function acquireStream(
   streamId,
   {
+    mediaSource = "tab",
     includePointer = false,
     captureMode,
     includeAudio: wantAudio = true,
@@ -200,6 +202,7 @@ async function acquireStream(
 ) {
   cleanup();
 
+  const captureDisplay = mediaSource === "display";
   const includeTabAudio =
     captureMode === "video" ? false : captureMode === "audio" ? true : Boolean(wantAudio);
   includeVideo =
@@ -207,8 +210,11 @@ async function acquireStream(
   includeAudio = includeTabAudio || Boolean(includeMicrophone) || Boolean(includeSoundtrack);
   soundtrackLoop = Boolean(loopSoundtrack);
   const cursor = includePointer ? "always" : "never";
+  // Share-dialog audio is optional. Tab audio is required when selected.
+  const requestSourceAudio = includeTabAudio;
 
   async function openStream(withAudio) {
+    if (captureDisplay) return openDisplayStream(withAudio);
     // Prefer cursor constraint so the OS pointer is not baked into tab capture
     // unless the user opted in. Fall back if the browser rejects it.
     const attempts = [
@@ -251,22 +257,66 @@ async function acquireStream(
     throw lastError || new Error("Failed to acquire tab stream");
   }
 
-  if (includeTabAudio) {
+  async function openDisplayStream(withAudio) {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      throw new Error("Screen capture is not available in this browser.");
+    }
+    const video = {
+      cursor,
+      frameRate: { ideal: 30, max: 30 },
+    };
+    const options = {
+      video,
+      audio: Boolean(withAudio),
+      monitorTypeSurfaces: "include",
+      selfBrowserSurface: "include",
+    };
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia(options);
+      await applyFrameRateConstraint(stream);
+      return stream;
+    } catch (error) {
+      if (error?.name === "OverconstrainedError") {
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: Boolean(withAudio),
+          });
+          await applyFrameRateConstraint(stream);
+          return stream;
+        } catch (retryError) {
+          throw displayCaptureError(retryError);
+        }
+      }
+      throw displayCaptureError(error);
+    }
+  }
+
+  if (requestSourceAudio) {
     try {
       tabCaptureStream = await openStream(true);
     } catch (error) {
       cleanup();
+      if (captureDisplay) throw error;
       throw new Error(
         `Could not capture tab audio: ${String(error?.message || error)}. ` +
           "Switch to Video only to record without tab audio."
       );
     }
   } else {
-    tabCaptureStream = await openStream(false);
+    try {
+      tabCaptureStream = await openStream(false);
+    } catch (error) {
+      cleanup();
+      if (captureDisplay) throw error;
+      throw new Error(`Could not capture the tab: ${String(error?.message || error)}.`);
+    }
   }
 
   const audioTracks = tabCaptureStream.getAudioTracks();
-  if (includeTabAudio && audioTracks.length === 0) {
+  includeAudio =
+    audioTracks.length > 0 || Boolean(includeMicrophone) || Boolean(includeSoundtrack);
+  if (requestSourceAudio && audioTracks.length === 0 && !captureDisplay) {
     cleanup();
     throw new Error(
       "Chrome returned a tab stream without audio. Switch to Video only to record without tab audio."
@@ -321,7 +371,8 @@ async function acquireStream(
     if (hasTabAudio) {
       const tabSource = audioContext.createMediaStreamSource(tabCaptureStream);
       tabSource.connect(recordingDestination);
-      tabSource.connect(audioContext.destination);
+      // Tab capture mutes the page, so play it back locally. Screen capture does not.
+      if (!captureDisplay) tabSource.connect(audioContext.destination);
     }
     if (hasMicrophoneAudio) {
       const microphoneSource = audioContext.createMediaStreamSource(microphoneStream);
@@ -359,6 +410,18 @@ async function setRecordingRegion(selection) {
     throw new Error("Recording cancelled");
   }
   captureStream = cropped;
+}
+
+function displayCaptureError(error) {
+  const name = error?.name || "";
+  const message = String(error?.message || error);
+  if (name === "NotAllowedError") {
+    if (/user gesture|not allowed by the user agent|current context/i.test(message)) {
+      return new Error("Chrome blocked the screen picker. Reload the extension and start again.");
+    }
+    return new Error("Screen capture was cancelled.");
+  }
+  return new Error(`Could not capture the screen: ${message}`);
 }
 
 async function applyCursorConstraint(stream, cursor) {

@@ -6,7 +6,7 @@
 
 Creating a video from a browser session shouldn't require a desktop screen share, a heavyweight recording suite, or a professional degree.
 
-Exergy ∞ xFrame records the current browser tab—including video, tab audio, and optional microphone audio—into a shareable MP4 using simple controls. It can also take a quick PNG snapshot of the visible tab, or turn the last recording into an animated GIF. Record. Snapshot. Animate. Share.
+Exergy ∞ xFrame records the current browser tab, an entire screen, or a window—including video, tab or system audio, and optional microphone audio—into a shareable MP4 using simple controls. It can also take a quick PNG snapshot of the visible tab, or turn the last recording into an animated GIF. Record. Snapshot. Animate. Share.
 
 Built on standard browser capabilities, xFrame stays small, fast, and easy to understand.
 
@@ -34,7 +34,7 @@ It is the first conceptual twin.
 
 ## Features
 
-- Record the current browser tab to MP4 when the browser can encode it (otherwise WebM)
+- Record the current browser tab, an entire screen, or a window to MP4 when the browser can encode it (otherwise WebM)
 - Optional tab audio and microphone audio, mixed when both are enabled
 - Video quality presets (Efficient / Standard / High) plus **Optimize for LinkedIn** (~6 Mbps, prefer H.264/AAC MP4)
 - Optional logo watermark and end-of-video outro (centered image over a blurred background, 1–10 seconds)
@@ -44,7 +44,7 @@ It is the first conceptual twin.
 - Animate the last saved recording into a GIF (FPS, speed, optional spiralflow timing)
 - Record / Snapshot / Animate tabs in the side panel
 - Local/unpacked builds can convert LinkedIn WebM to H.264/AAC MP4 in the extension
-- No desktop recording; lightweight UI on standard browser APIs
+- Lightweight side panel on standard browser APIs
 
 Typical recordings are approximately **0.25–1 MB/s** depending on the quality preset, resolution, motion, and whether audio is included (Efficient ≈ 2 Mbps video; Standard ≈ 5 Mbps; High ≈ 8 Mbps).
 
@@ -67,7 +67,7 @@ Rather than capturing everything, Exergy ∞ xFrame helps you focus on what matt
 1. Open the website tab you want to capture
 2. Click the Exergy ∞ xFrame toolbar icon
 3. Choose options, then **Start session**
-4. If **Region** is selected, drag an area on the tab (Esc cancels), then watch the countdown (3 → 2 → 1)
+4. If **Region** is selected, drag an area on the tab (Esc cancels). If **Screen** is selected, choose an entire screen or a window in Chrome’s share dialog. Then watch the countdown (3 → 2 → 1)
 5. Work as usual; pause or stop when done
 6. The recording downloads as `{tab title} {YYYY-MM-DD HH_MM}.mp4` (or `.webm` if MP4 is unavailable)
 
@@ -77,7 +77,7 @@ Region recordings preserve audio and place the logo, visible controls, and outro
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| Capture | Visible tab | Choose **Region** to record a selected area; disabled for Audio only. The choice is remembered, and you select a fresh area for each session. |
+| Capture | Tab | **Tab** records this tab. **Screen** asks Chrome for an entire screen or a window (check Share audio in that dialog to include system audio). **Region** records a dragged area of the tab. Disabled for Audio only. The choice is remembered. |
 | Include logo in recording | On | Watermark in the top-right (Exergy by default; choose a custom image in the side panel) |
 | Show outro after recording | Off | After Stop & save, keeps recording a blurred, centered outro image for 1–10 seconds (default 3) |
 | Hide recording controls from the video | On | Omits the on-page session bar from the recording; reopen the side panel (or use keys) to pause/stop |
@@ -145,7 +145,7 @@ Long or high-FPS clips may be rejected if they would exceed a safe frame budget;
 
 ## How a session works
 
-Start acquires the tab stream and prepares the offscreen recorder before the countdown. Encoding begins only after the countdown finishes so the digits are not recorded. Stop writes the recording to IndexedDB, then the service worker downloads it.
+Start acquires the tab, screen, or window stream and prepares the offscreen recorder before the countdown. Encoding begins only after the countdown finishes so the digits are not recorded. Stop writes the recording to IndexedDB, then the service worker downloads it.
 
 ```mermaid
 sequenceDiagram
@@ -185,7 +185,7 @@ sequenceDiagram
 ```
 
 1. **Start** — The side panel asks the service worker to begin a session on the active tab (with the chosen options).
-2. **Acquire** — The worker obtains a `tabCapture` stream id, opens an offscreen document, and the recorder calls `getUserMedia` for the tab media source and, when selected, the microphone. An `AudioContext` mixes the chosen sources into one recording track; tab audio is also routed locally so you can still hear the page. Capture requests `cursor: never` unless “Include mouse pointer” is on, and aims for 30 fps.
+2. **Acquire** — For a tab or region, the worker obtains a `tabCapture` stream id and the offscreen recorder calls `getUserMedia` for that tab. For **Screen**, the offscreen recorder calls `getDisplayMedia`, and Chrome asks for an entire screen or a window. The microphone is added when selected. An `AudioContext` mixes the chosen sources into one recording track. Tab audio is also routed locally so you can still hear the page; screen audio is not played back again. Capture requests `cursor: never` unless “Include mouse pointer” is on, and aims for 30 fps.
 3. **Countdown** — A content overlay counts down for about three seconds.
 4. **Record** — After the overlay clears, `MediaRecorder` starts with the chosen quality bitrates (MP4 when the browser can actually record it; otherwise WebM). Tab and microphone audio are captured only when enabled. The native cursor is hidden on the page; optional logo / pointer overlays and session UI follow the start options.
 5. **Stop & save** — If an outro image is configured, it is shown on the tab (blurred background, image centered) for the chosen duration while capture continues. Then the offscreen recorder stores the blob in IndexedDB. A short-lived `saver.html` page (needed because service workers lack `URL.createObjectURL`) reads the blob, downloads it via `chrome.downloads`, revokes the URL, and closes.

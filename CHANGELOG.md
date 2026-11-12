@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Record capture controls for the visible tab or a selected region, with audio preserved and region selection before the countdown.
+- **Screen** capture: Chrome’s share dialog lets you record an entire screen or a window, with optional system audio.
 
 ### Fixed
 
+- Choosing a window in screen capture no longer fails with “Error starting tab capture.” The recorder asks Chrome for that window directly.
 - LinkedIn snapshots fit the whole visible tab inside 1280×644 instead of center-cropping it.
 - Replace native outro duration, media, quality, and snapshot delay dropdowns with in-panel menus that support mouse and keyboard selection.
 - Size dropdown buttons to their selected text and menus to their options, keeping menus within the panel width.

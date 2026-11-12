@@ -552,12 +552,16 @@
         >
           <div class="field">
             <span class="field__label">Capture</span>
-            <div class="modes">
-              <label class="mode" for="recordModeFull">
+            <div class="modes modes--format">
+              <label class="mode" for="recordModeFull" title="Record this tab">
                 <input id="recordModeFull" type="radio" name="recordMode" value="full" checked />
-                <span>Visible tab</span>
+                <span>Tab</span>
               </label>
-              <label class="mode" for="recordModeRegion">
+              <label class="mode" for="recordModeScreen" title="Record an entire screen or a window">
+                <input id="recordModeScreen" type="radio" name="recordMode" value="screen" />
+                <span>Screen</span>
+              </label>
+              <label class="mode" for="recordModeRegion" title="Drag to select part of this tab">
                 <input id="recordModeRegion" type="radio" name="recordMode" value="region" />
                 <span>Region</span>
               </label>
